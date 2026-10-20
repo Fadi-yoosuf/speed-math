@@ -66,7 +66,15 @@ class RateBucket {
   }
 }
 
-function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registry } = {}) {
+function normalisePublicUrl(url) {
+  if (!url) return null;
+  const trimmed = String(url).trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/[^\s/]+$/i.test(trimmed)) return null;
+  return trimmed;
+}
+
+function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registry, publicUrl = process.env.PUBLIC_URL } = {}) {
+  const publicOrigin = normalisePublicUrl(publicUrl);
   const rooms = registry || new RoomRegistry();
   const app = createApp();
   const server = http.createServer(app);
@@ -129,16 +137,38 @@ function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registr
     return `${proto}://${hostHeader}`;
   }
 
-  async function welcome(conn, room, player) {
-    const joinUrl = `${conn.origin}/join/${room.code}`;
-    const tvUrl = `${conn.origin}/tv/${room.code}`;
-    let qrDataUrl = null;
+  async function safeQr(url) {
     try {
-      qrDataUrl = await qrFor(joinUrl);
+      return await qrFor(url);
     } catch (err) {
       log('QR generation failed:', err.message);
+      return null;
     }
-    send(conn.ws, { type: 'welcome', playerId: player.id, token: player.token, code: room.code, joinUrl, tvUrl, qrDataUrl });
+  }
+
+  // Links for sharing a room: the origin this client used, plus the public
+  // address (PUBLIC_URL, e.g. a tunnel) when that is a different one.
+  async function shareInfo(conn, code) {
+    const info = {
+      joinUrl: `${conn.origin}/join/${code}`,
+      tvUrl: `${conn.origin}/tv/${code}`,
+      qrDataUrl: null,
+      publicJoinUrl: null,
+      publicTvUrl: null,
+      publicQrDataUrl: null,
+    };
+    info.qrDataUrl = await safeQr(info.joinUrl);
+    if (publicOrigin && publicOrigin !== conn.origin) {
+      info.publicJoinUrl = `${publicOrigin}/join/${code}`;
+      info.publicTvUrl = `${publicOrigin}/tv/${code}`;
+      info.publicQrDataUrl = await safeQr(info.publicJoinUrl);
+    }
+    return info;
+  }
+
+  async function welcome(conn, room, player) {
+    const info = await shareInfo(conn, room.code);
+    send(conn.ws, { type: 'welcome', playerId: player.id, token: player.token, code: room.code, ...info });
   }
 
   function leaveCurrent(conn, { forget } = {}) {
@@ -206,14 +236,14 @@ function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registr
         conn.roomCode = target.code;
         conn.role = 'watcher';
         connectionsFor(target.code).add(conn);
-        const joinUrl = `${conn.origin}/join/${target.code}`;
-        let qrDataUrl = null;
-        try {
-          qrDataUrl = await qrFor(joinUrl);
-        } catch {
-          /* QR is optional */
-        }
-        send(conn.ws, { type: 'watching', code: target.code, joinUrl, qrDataUrl });
+        const info = await shareInfo(conn, target.code);
+        // A TV shows the address that works for everyone.
+        send(conn.ws, {
+          type: 'watching',
+          code: target.code,
+          joinUrl: info.publicJoinUrl || info.joinUrl,
+          qrDataUrl: info.publicJoinUrl ? info.publicQrDataUrl : info.qrDataUrl,
+        });
         send(conn.ws, { type: 'room_state', ...target.toState(), you: null });
         return;
       }
@@ -314,7 +344,9 @@ function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registr
       log(`Speed Math is running.`);
       log(`  Local:  http://localhost:${actualPort}`);
       if (lan) log(`  Wi-Fi:  http://${lan}:${actualPort}   ← open this on phones and tablets on this Wi-Fi`);
+      if (publicOrigin) log(`  Public: ${publicOrigin}   ← share this with friends elsewhere`);
       resolve({
+        publicUrl: publicOrigin,
         server,
         wss,
         rooms,
@@ -334,7 +366,7 @@ function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registr
   });
 }
 
-module.exports = { startServer, createApp, lanAddress, RateBucket };
+module.exports = { startServer, createApp, lanAddress, RateBucket, normalisePublicUrl };
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;

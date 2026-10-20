@@ -1,0 +1,14 @@
+# Render Blueprint: deploy Speed Math with one click.
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: speed-math
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"

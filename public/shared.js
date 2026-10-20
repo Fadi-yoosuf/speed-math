@@ -43,11 +43,17 @@
     let closedByUs = false;
     let attempt = 0;
     let timer = null;
+    let keepalive = null;
+    const KEEPALIVE_MS = 25000; // hosted free tiers idle out without traffic
 
     function open() {
       ws = new WebSocket(url);
       ws.addEventListener('open', () => {
         attempt = 0;
+        clearInterval(keepalive);
+        keepalive = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping', payload: {} }));
+        }, KEEPALIVE_MS);
         if (onOpen) onOpen();
       });
       ws.addEventListener('message', (ev) => {
@@ -60,6 +66,7 @@
         if (onMessage) onMessage(msg);
       });
       ws.addEventListener('close', () => {
+        clearInterval(keepalive);
         if (onClose) onClose();
         if (closedByUs) return;
         attempt += 1;
@@ -82,6 +89,7 @@
       close() {
         closedByUs = true;
         clearTimeout(timer);
+        clearInterval(keepalive);
         if (ws) ws.close();
       },
     };

@@ -126,7 +126,10 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus { border-colo
 .code-card { text-align: center; }
 .code-label { font-size: 0.85rem; color: var(--ink-2); font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; }
 .room-code { font-family: var(--mono); font-size: 3rem; font-weight: 900; letter-spacing: 0.25em; margin: 4px 0 10px; color: var(--primary-2); }
-.share-row { display: flex; gap: 16px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.share-row { display: flex; gap: 16px; align-items: stretch; justify-content: center; flex-wrap: wrap; }
+.share-block { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 14px; background: #f8fafc; border: 2px solid var(--line); min-width: 200px; flex: 1; max-width: 320px; }
+.share-block h3 { margin: 0; font-size: 0.85rem; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.08em; }
+.share-block.public { border-color: #bfdbfe; background: #eff6ff; }
 .qr { width: 128px; height: 128px; border-radius: 10px; border: 4px solid #fff; background: #fff; image-rendering: pixelated; }
 .share-text { display: flex; flex-direction: column; gap: 6px; align-items: center; font-size: 0.9rem; color: var(--ink-2); }
 .join-url { font-family: var(--mono); font-weight: 700; color: var(--ink); word-break: break-all; font-size: 0.9rem; }

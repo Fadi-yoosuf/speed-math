@@ -235,26 +235,39 @@
   })();
 
   // ---- lobby -----------------------------------------------------------------
+  function shareBlock({ title, joinUrl, tvUrl, qrDataUrl, cls }) {
+    const pretty = joinUrl.replace(/^https?:\/\//, '');
+    return `<div class="share-block ${cls}">
+      <h3>${title}</h3>
+      ${qrDataUrl ? `<img class="qr" alt="QR code to join" src="${qrDataUrl}">` : ''}
+      <a class="join-url" href="${escapeHtml(joinUrl)}" target="_blank" rel="noopener">${escapeHtml(pretty)}</a>
+      <button class="btn btn-small copy-link-btn" type="button" data-url="${escapeHtml(joinUrl)}">Copy link</button>
+      <a class="btn btn-small btn-ghost" href="${escapeHtml(tvUrl)}" target="_blank" rel="noopener">📺 TV view</a>
+    </div>`;
+  }
+
   function renderShare() {
     const info = state.joinInfo;
     if (!info) return;
     $('room-code').textContent = info.code;
-    $('join-url').textContent = info.joinUrl.replace(/^https?:\/\//, '');
-    $('join-url').href = info.joinUrl;
-    $('tv-url').href = info.tvUrl;
-    if (info.qrDataUrl) {
-      $('qr-img').src = info.qrDataUrl;
-      $('qr-img').hidden = false;
-    } else $('qr-img').hidden = true;
+    const blocks = [];
+    if (info.publicJoinUrl) {
+      blocks.push(shareBlock({ title: 'On this Wi-Fi', joinUrl: info.joinUrl, tvUrl: info.tvUrl, qrDataUrl: info.qrDataUrl, cls: 'local' }));
+      blocks.push(shareBlock({ title: 'From anywhere', joinUrl: info.publicJoinUrl, tvUrl: info.publicTvUrl, qrDataUrl: info.publicQrDataUrl, cls: 'public' }));
+    } else {
+      blocks.push(shareBlock({ title: 'Friends join at', joinUrl: info.joinUrl, tvUrl: info.tvUrl, qrDataUrl: info.qrDataUrl, cls: 'local' }));
+    }
+    $('share-blocks').innerHTML = blocks.join('');
   }
 
-  $('copy-link-btn').addEventListener('click', async () => {
-    if (!state.joinInfo) return;
+  $('share-blocks').addEventListener('click', async (e) => {
+    const b = e.target.closest('.copy-link-btn');
+    if (!b) return;
     try {
-      await navigator.clipboard.writeText(state.joinInfo.joinUrl);
+      await navigator.clipboard.writeText(b.dataset.url);
       toast('Link copied!');
     } catch {
-      toast(state.joinInfo.joinUrl);
+      toast(b.dataset.url);
     }
   });
 
