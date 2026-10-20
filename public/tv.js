@@ -98,10 +98,22 @@
     sprintTicker = setInterval(tick, 250);
   }
 
+  function renderSeason() {
+    const el = $('tv-season');
+    const season = room.season;
+    if (!season || season.races === 0 || room.phase === 'racing' || room.phase === 'countdown') {
+      el.classList.add('hidden');
+      return;
+    }
+    el.innerHTML = `🏆 Season after ${season.races} race${season.races === 1 ? '' : 's'}: ` + season.standings.map((s) => `${SM.escapeHtml(s.name)} ${s.points}`).join(' · ');
+    el.classList.remove('hidden');
+  }
+
   function renderRoom() {
     const phase = room.phase;
     const mode = room.mode || room.settings.mode;
     SM.applyTheme(room.settings.theme);
+    renderSeason();
     track.render(room.players, { raceLength, hostId: room.hostId, lastWinnerId: room.lastWinnerId, phase, theme: room.settings.theme, mode, nitro: room.settings.nitro });
     $('tv-track').classList.toggle('hidden', phase === 'finished');
     $('tv-podium').classList.toggle('hidden', phase !== 'finished');

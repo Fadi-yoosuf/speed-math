@@ -157,13 +157,22 @@ function normaliseOps(ops) {
   return OPS.filter((o) => list.includes(o));
 }
 
-function generate(seed, level, ops, count) {
+// Mystery numbers hide one operand instead of the result: "7 + ? = 12".
+// Division is left out, and a hidden factor next to a 0 would be ambiguous.
+function canHide(op, a, b) {
+  if (op === 'div') return false;
+  if (op === 'mul') return a !== 0 && b !== 0;
+  return true;
+}
+
+function generate(seed, level, ops, count, options = {}) {
   const lvl = Number(level);
   if (!LEVELS[lvl]) throw new RangeError(`Unknown level: ${level}`);
   const useOps = normaliseOps(ops);
   if (useOps.length === 0) throw new RangeError('At least one operation is required');
   const n = Number(count);
   if (!Number.isInteger(n) || n < 1) throw new RangeError(`Bad count: ${count}`);
+  const mystery = Boolean(options.mystery);
 
   const rng = makeRng(`${toSeedInt(seed)}:${lvl}:${useOps.join('')}:${n}`);
   const out = [];
@@ -172,9 +181,23 @@ function generate(seed, level, ops, count) {
     const op = rng.pick(useOps);
     const [a, b] = BUILDERS[op](rng, lvl);
     if (isTrivial(op, a, b, lvl)) continue;
-    const text = `${a} ${OP_SYMBOL[op]} ${b}`;
+    const result = compute(op, a, b);
+    let text = `${a} ${OP_SYMBOL[op]} ${b}`;
+    let answer = result;
+    let kind = 'result';
+    if (mystery && canHide(op, a, b) && rng.int(0, 2) === 0) {
+      // roughly one in three sums hides an operand; which one is random too
+      if (rng.bool()) {
+        text = `${a} ${OP_SYMBOL[op]} ? = ${result}`;
+        answer = b;
+      } else {
+        text = `? ${OP_SYMBOL[op]} ${b} = ${result}`;
+        answer = a;
+      }
+      kind = 'mystery';
+    }
     if (text === prevText) continue;
-    out.push({ text, answer: compute(op, a, b), op, a, b });
+    out.push({ text, answer, op, a, b, kind });
     prevText = text;
   }
   return out;

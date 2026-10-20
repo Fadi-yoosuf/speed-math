@@ -239,3 +239,45 @@ test('rejects garbage and unknown messages without dropping the connection', asy
     await srv.close();
   }
 });
+
+test('a kicked player is told, dropped from the room, and cannot act afterwards', async () => {
+  const srv = await startServer({ port: 0, log: () => {} });
+  const url = `ws://127.0.0.1:${srv.port}/ws`;
+  const host = client(url);
+  const ben = client(url);
+  try {
+    await Promise.all([host.open(), ben.open()]);
+    host.send('create_room', { name: 'Ava', car: car('🚗', '#ef4444'), level: 1 });
+    const w = await host.next((m) => m.type === 'welcome');
+    ben.send('join_room', { code: w.code, name: 'Ben', car: car('🚕', '#22c55e'), level: 2 });
+    const wb = await ben.next((m) => m.type === 'welcome');
+    await host.next((m) => m.type === 'room_state' && m.players.length === 2);
+    ben.send('kick_player', { playerId: w.playerId });
+    assert.match((await ben.next((m) => m.type === 'error')).message, /host/);
+    host.send('kick_player', { playerId: wb.playerId });
+    const kicked = await ben.next((m) => m.type === 'error');
+    assert.equal(kicked.code, 'KICKED');
+    const after = await host.next((m) => m.type === 'room_state' && m.players.length === 1);
+    assert.equal(after.players[0].name, 'Ava');
+    ben.send('start_race');
+    assert.match((await ben.next((m) => m.type === 'error')).message, /join a race first/);
+    assert.equal(ben.inbox.some((m) => m.type === 'room_state' && m.players.length === 1), false, 'no stray state after the kick');
+  } finally {
+    await Promise.all([host, ben].map((c) => (c.ws.readyState === WebSocket.OPEN ? c.close() : null)));
+    await srv.close();
+  }
+});
+
+test('static assets for the installable app are served', async () => {
+  const srv = await startServer({ port: 0, log: () => {} });
+  try {
+    const manifest = await get(`${srv.url}/manifest.webmanifest`);
+    assert.equal(manifest.status, 200);
+    assert.equal(JSON.parse(manifest.body).short_name, 'Speed Math');
+    assert.equal((await get(`${srv.url}/sw.js`)).status, 200);
+    assert.equal((await get(`${srv.url}/icons/icon-192.png`)).status, 200);
+    assert.match((await get(`${srv.url}/questions.js`)).body, /SMQuestions/);
+  } finally {
+    await srv.close();
+  }
+});

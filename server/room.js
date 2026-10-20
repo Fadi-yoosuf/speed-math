@@ -29,6 +29,7 @@ const {
 } = require('./protocol');
 
 const PHASES = ['lobby', 'countdown', 'racing', 'finished'];
+const SEASON_POINTS = [3, 2, 1]; // for 1st, 2nd, 3rd in each race
 const HOST_GRACE_MS = 5000; // how long a dropped host keeps the badge
 const DISCONNECT_TTL_MS = 2 * 60 * 1000; // dropped players are pruned after this
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000; // room deleted after this with nobody connected
@@ -73,6 +74,8 @@ class Room extends EventEmitter {
     this.ranking = null;
     this.timers = { countdown: null, flag: null, sprint: null, hostGrace: null };
     this.endReason = null;
+    // Points across the races played in this room (an evening's "season").
+    this.season = { races: 0, points: new Map(), wins: new Map() };
   }
 
   // ---- players ---------------------------------------------------------------
@@ -173,6 +176,8 @@ class Room extends EventEmitter {
     if (!player) return;
     if (player.pruneTimer) this.deps.clearTimeout(player.pruneTimer);
     this.players.delete(playerId);
+    this.season.points.delete(playerId);
+    this.season.wins.delete(playerId);
     if (this.hostId === playerId) {
       this.hostId = null;
       this.ensureHost();
@@ -240,6 +245,24 @@ class Room extends EventEmitter {
     if (this.inRace) return fail('wait for the race to end');
     if (this.settings.lockLevel && level !== this.settings.lockLevel) return fail('the host locked the level');
     player.level = level;
+    this.emit('changed');
+    return ok();
+  }
+
+  // The host can remove a player (between races only).
+  kick(hostId, playerId) {
+    if (!this.isHost(hostId)) return fail('only the host can remove players');
+    if (playerId === hostId) return fail('you cannot remove yourself');
+    if (this.inRace) return fail('wait for the race to end');
+    if (!this.players.has(playerId)) return fail('no such player');
+    this.removePlayer(playerId);
+    return ok();
+  }
+
+  resetSeason(hostId) {
+    if (!this.isHost(hostId)) return fail('only the host can start a new season');
+    if (this.inRace) return fail('wait for the race to end');
+    this.season = { races: 0, points: new Map(), wins: new Map() };
     this.emit('changed');
     return ok();
   }
@@ -319,7 +342,7 @@ class Room extends EventEmitter {
 
   questionsFor(level) {
     if (!this.questions.has(level)) {
-      this.questions.set(level, generate(this.seed, level, this.settings.ops, this.questionCount()));
+      this.questions.set(level, generate(this.seed, level, this.settings.ops, this.questionCount(), { mystery: this.settings.mystery }));
     }
     return this.questions.get(level);
   }
@@ -436,8 +459,29 @@ class Room extends EventEmitter {
     this.ranking = this.computeRanking();
     const top = this.ranking[0];
     if (top && (top.finished || (this.mode === 'sprint' && top.correct > 0))) this.lastWinnerId = top.playerId;
-    this.emit('broadcast', { type: 'race_finished', reason, mode: this.mode, ranking: this.ranking });
+    this.awardSeasonPoints();
+    this.emit('broadcast', { type: 'race_finished', reason, mode: this.mode, ranking: this.ranking, season: this.seasonState() });
     this.emit('changed');
+  }
+
+  // Top three of each race score 3/2/1. In a race you must cross the line;
+  // in a sprint you must have at least one correct answer.
+  awardSeasonPoints() {
+    const scored = this.ranking.filter((r) => (this.mode === 'sprint' ? r.correct > 0 : r.finished));
+    if (scored.length === 0) return;
+    this.season.races += 1;
+    scored.slice(0, SEASON_POINTS.length).forEach((r, i) => {
+      this.season.points.set(r.playerId, (this.season.points.get(r.playerId) || 0) + SEASON_POINTS[i]);
+      if (i === 0) this.season.wins.set(r.playerId, (this.season.wins.get(r.playerId) || 0) + 1);
+    });
+    for (const r of this.ranking) r.seasonPoints = this.season.points.get(r.playerId) || 0;
+  }
+
+  seasonState() {
+    const standings = [...this.players.values()]
+      .map((p) => ({ playerId: p.id, name: p.name, car: p.car, points: this.season.points.get(p.id) || 0, wins: this.season.wins.get(p.id) || 0 }))
+      .sort((a, b) => b.points - a.points || b.wins - a.wins || a.name.localeCompare(b.name));
+    return { races: this.season.races, standings };
   }
 
   computeRanking() {
@@ -454,7 +498,7 @@ class Room extends EventEmitter {
       racers.sort((a, b) => {
         const af = a.finishedAt !== null;
         const bf = b.finishedAt !== null;
-        if (af && bf) return a.finishedAt - b.finishedAt;
+        if (af && bf) return a.finishedAt - b.finishedAt || a.wrong - b.wrong || a.joinedAt - b.joinedAt;
         if (af !== bf) return af ? -1 : 1;
         if (b.progress !== a.progress) return b.progress - a.progress;
         if (b.correct !== a.correct) return b.correct - a.correct;
@@ -539,6 +583,7 @@ class Room extends EventEmitter {
       sprintRemainingMs: racing && this.sprintEndsAt !== null ? Math.max(0, this.sprintEndsAt - now) : null,
       endReason: this.endReason,
       ranking: this.phase === 'finished' ? this.ranking : null,
+      season: this.seasonState(),
       players: [...this.players.values()].map((p) => ({
         id: p.id,
         name: p.name,
@@ -574,4 +619,4 @@ function freshRaceStats() {
   };
 }
 
-module.exports = { Room, PHASES, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS, sprintQuestionCount };
+module.exports = { Room, PHASES, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS, SEASON_POINTS, sprintQuestionCount };

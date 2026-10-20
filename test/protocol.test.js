@@ -96,3 +96,12 @@ test('set_handicap takes a player id and 0-5 segments', () => {
   assert.equal(parseMessage(raw('set_handicap', { playerId: 'abc123', segments: -1 })).ok, false);
   assert.equal(parseMessage(raw('set_handicap', { playerId: '', segments: 1 })).ok, false);
 });
+
+test('milestone 5: mystery setting, kick_player and reset_season messages', () => {
+  assert.equal(DEFAULT_SETTINGS.mystery, false);
+  assert.equal(validateSettings({ mystery: 1 }).settings.mystery, true);
+  assert.deepEqual(parseMessage(raw('kick_player', { playerId: 'abc' })).payload, { playerId: 'abc' });
+  assert.equal(parseMessage(raw('kick_player', { playerId: '' })).ok, false);
+  assert.equal(parseMessage(raw('kick_player', { playerId: 42 })).ok, false);
+  assert.equal(parseMessage(raw('reset_season', {})).ok, true);
+});

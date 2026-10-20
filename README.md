@@ -10,7 +10,9 @@ playable race, mobile numpad, auto-submit, skid penalty, sounds, confetti,
 QR join codes, TV mode, reconnect on refresh, host hand-over, room expiry,
 the hosting options below (Wi-Fi, Cloudflare Quick Tunnel, Render, Docker),
 and the extras: nitro streaks, sprint mode, division, themes, head starts,
-a fastest-answer stat and a solo practice mode.
+a fastest-answer stat and a solo practice mode. A fifth milestone adds season
+points across an evening's races, mystery-number sums, a practice personal
+best, and an installable app that keeps practice working offline.
 
 ## Hosting
 
@@ -182,7 +184,22 @@ rate-limits you, build from a mirror:
   and who had the fastest of the race.
 - **🎯 Practice alone:** from the home screen, a 20-sum solo run at your
   level with no room and no code. It runs entirely in the browser, so it
-  works even before anyone else has joined.
+  works even before anyone else has joined. Your best time per level is
+  remembered on the device.
+- **❓ Mystery number:** some sums hide a number instead of the answer
+  (`7 + ? = 12`, `? × 3 = 12`). Opt-in; about one sum in three.
+- **🏆 Season standings:** the top three of every race score 3, 2 and 1
+  points for as long as the room lives. The lobby, podium and TV show the
+  table; the host can start a new season.
+- **Remove a player:** the host can drop someone from the room between
+  races (a duplicate tab, a sibling who wandered off).
+
+## Install it on a phone or tablet
+
+Open the game in the browser once, then use **Add to Home Screen**
+(Safari share menu on iPhone and iPad; the install prompt or browser menu
+on Android). It opens full-screen like an app. Practice mode keeps working
+offline; races still need the server on the Wi-Fi.
 
 ## Development
 
@@ -202,8 +219,10 @@ server/questions.js  generate(seed, level, ops, count)
 server/words.js      kid-safe room-code words, nickname filter
 server/protocol.js   message validation
 public/              index.html, tv.html, app.js, tv.js, shared.js, styles.css
+public/sw.js         service worker (installable app, offline practice)
 scripts/tunnel.js    npm run tunnel helper
 test/                node --test suites
+.github/workflows/   CI: tests on Node 20 and 22, Docker build and smoke test
 render.yaml          Render Blueprint (free web service)
 Dockerfile           node:20-alpine image
 ```

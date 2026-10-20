@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Room, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS, sprintQuestionCount } = require('../server/room');
+const { Room, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS, SEASON_POINTS, sprintQuestionCount } = require('../server/room');
 const { RoomRegistry } = require('../server/rooms');
 const { STALL_MS, MAX_PLAYERS } = require('../server/protocol');
 const { fakeDeps, recorder, car } = require('./helpers');
@@ -468,4 +468,100 @@ test('host can end a sprint early', () => {
   assert.equal(room.endRace(ids.Ava).ok, true);
   assert.equal(room.endReason, 'host');
   assert.equal(room.toState().sprintRemainingMs, null);
+});
+
+// ---- milestone 5 ---------------------------------------------------------------
+
+test('season points: 3/2/1 per race for finishers, kept across races in the room', () => {
+  const { room, ids, deps, rec } = setup({ settings: { flagTimerSec: 5 } });
+  assert.deepEqual(SEASON_POINTS, [3, 2, 1]);
+  assert.equal(room.toState().season.races, 0);
+  startRace(room, deps, ids.Ava);
+  answerAll(room, rec, ids.Cal, 10);
+  deps.advance(500);
+  answerAll(room, rec, ids.Ava, 10);
+  deps.advance(5000); // Ben never finishes
+  assert.equal(room.phase, 'finished');
+  let season = room.toState().season;
+  assert.equal(season.races, 1);
+  assert.deepEqual(season.standings.map((s) => [s.name, s.points, s.wins]), [['Cal', 3, 1], ['Ava', 2, 0], ['Ben', 0, 0]]);
+  assert.equal(rec.ofType('race_finished')[0].season.races, 1);
+  assert.equal(rec.ofType('race_finished')[0].ranking[0].seasonPoints, 3);
+  // second race: Ava first, Ben second, Cal third
+  room.raceAgain(ids.Ava);
+  deps.advance(3000);
+  answerAll(room, rec, ids.Ava, 10);
+  deps.advance(500);
+  answerAll(room, rec, ids.Ben, 10);
+  deps.advance(500);
+  answerAll(room, rec, ids.Cal, 10);
+  season = room.toState().season;
+  assert.equal(season.races, 2);
+  assert.deepEqual(season.standings.map((s) => [s.name, s.points, s.wins]), [['Ava', 5, 1], ['Cal', 4, 1], ['Ben', 2, 0]]);
+  // back to the garage keeps the standings; a new season clears them
+  room.backToLobby(ids.Ava);
+  assert.equal(room.toState().season.races, 2);
+  assert.equal(room.resetSeason(ids.Ben).ok, false);
+  assert.equal(room.resetSeason(ids.Ava).ok, true);
+  assert.equal(room.toState().season.races, 0);
+  assert.ok(room.toState().season.standings.every((s) => s.points === 0));
+});
+
+test('season points: a race nobody finished scores nothing; sprints score by correct answers', () => {
+  const { room, ids, deps } = setup({ players: ['Ava', 'Ben'] });
+  startRace(room, deps, ids.Ava);
+  room.endRace(ids.Ava);
+  assert.equal(room.toState().season.races, 0);
+  room.updateSettings(ids.Ava, { mode: 'sprint', sprintSec: 30 });
+  room.raceAgain(ids.Ava);
+  deps.advance(3000);
+  const qs = room.questionsFor(1);
+  room.answer(ids.Ben, 0, qs[0].answer);
+  deps.advance(30000);
+  const season = room.toState().season;
+  assert.equal(season.races, 1);
+  assert.deepEqual(season.standings.map((s) => [s.name, s.points]), [['Ben', 3], ['Ava', 0]], 'Ava had no correct answers, so no points');
+});
+
+test('host can remove a player between races; their points go too', () => {
+  const { room, ids, deps, rec } = setup();
+  startRace(room, deps, ids.Ava);
+  assert.equal(room.kick(ids.Ava, ids.Ben).ok, false, 'not during a race');
+  answerAll(room, rec, ids.Ben, 10);
+  deps.advance(20000);
+  assert.equal(room.toState().season.standings[0].name, 'Ben');
+  assert.equal(room.kick(ids.Cal, ids.Ben).ok, false, 'not the host');
+  assert.equal(room.kick(ids.Ava, ids.Ava).ok, false, 'not yourself');
+  assert.equal(room.kick(ids.Ava, 'nobody').ok, false);
+  assert.equal(room.kick(ids.Ava, ids.Ben).ok, true);
+  assert.equal(room.getPlayer(ids.Ben), null);
+  assert.equal(room.playerCount, 2);
+  assert.ok(room.toState().season.standings.every((s) => s.name !== 'Ben'));
+});
+
+test('mystery sums reach the players when the host turns them on', () => {
+  const { room, ids, deps, rec } = setup({ players: ['Ava'], settings: { length: 30, ops: ['add', 'sub', 'mul'] } });
+  assert.equal(room.updateSettings(ids.Ava, { mystery: true }).ok, true);
+  startRace(room, deps, ids.Ava);
+  const qs = room.questionsFor(1);
+  assert.ok(qs.some((q) => q.kind === 'mystery'), 'at least one mystery sum in 30');
+  for (let i = 0; i < 30; i++) {
+    const q = rec.lastQuestion(ids.Ava);
+    assert.equal(q.text, qs[i].text);
+    assert.equal(q.answerLength, String(qs[i].answer).length);
+    room.answer(ids.Ava, i, qs[i].answer);
+  }
+  assert.equal(room.phase, 'finished');
+});
+
+test('equal finish times rank the racer with fewer mistakes first', () => {
+  const { room, ids, deps, rec } = setup({ players: ['Ava', 'Ben'] });
+  startRace(room, deps, ids.Ava);
+  const qs = room.questionsFor(1);
+  room.answer(ids.Ava, 0, qs[0].answer + 1);
+  deps.advance(2000);
+  answerAll(room, rec, ids.Ava, 10);
+  answerAll(room, rec, ids.Ben, 10);
+  assert.equal(room.ranking[0].name, 'Ben');
+  assert.equal(room.ranking[0].timeMs, room.ranking[1].timeMs);
 });

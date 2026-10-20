@@ -150,3 +150,19 @@ test('rejects bad input', () => {
   assert.equal(Object.keys(LEVELS).length, 4);
   assert.deepEqual(OPS, ['add', 'sub', 'mul', 'div']);
 });
+
+test('mystery numbers hide one operand in about a third of the sums', () => {
+  const qs = generate('mystery', 2, ['add', 'sub', 'mul', 'div'], 600, { mystery: true });
+  const hidden = qs.filter((q) => q.kind === 'mystery');
+  assert.ok(hidden.length > 100 && hidden.length < 300, `got ${hidden.length} mystery sums`);
+  for (const q of hidden) {
+    assert.match(q.text, /^(\d+|\?) [+−×] (\d+|\?) = \d+$/, q.text);
+    assert.notEqual(q.op, 'div', 'division is never a mystery');
+    const expected = q.text.startsWith('?') ? q.a : q.b;
+    assert.equal(q.answer, expected, q.text);
+    if (q.op === 'mul') assert.ok(q.a !== 0 && q.b !== 0, `ambiguous: ${q.text}`);
+  }
+  for (const q of qs.filter((q) => q.kind === 'result')) assert.match(q.text, /^\d+ [+−×÷] \d+$/, q.text);
+  assert.deepEqual(generate('mystery', 2, ALL, 50), generate('mystery', 2, ALL, 50, { mystery: false }), 'off by default');
+  assert.ok(generate('mystery', 1, ALL, 200).every((q) => q.kind === 'result'));
+});

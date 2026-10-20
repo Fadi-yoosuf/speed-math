@@ -6,7 +6,13 @@
   <title>Speed Math</title>
   <meta name="description" content="A car-race game for kids: solve sums fast, your car moves faster.">
   <meta name="theme-color" content="#0f172a">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏎️</text></svg>">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Speed Math">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -45,6 +51,7 @@
         <div class="home-actions">
           <button id="new-race-btn" class="btn btn-primary btn-big" type="button">🏁 New race</button>
           <button id="practice-btn" class="btn btn-secondary btn-big" type="button">🎯 Practice alone</button>
+          <p id="practice-best" class="hint practice-best hidden"></p>
           <div class="join-row">
             <input id="code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" aria-label="Room code">
             <button id="join-btn" class="btn btn-secondary" type="button">Join</button>
@@ -67,6 +74,7 @@
           <h2>Start grid <span id="player-count" class="muted"></span></h2>
           <div id="lobby-track" class="track track-lobby"></div>
           <div id="handicaps" class="handicaps hidden"></div>
+          <div id="season" class="season hidden"></div>
           <div class="lobby-level">
             <span>Your level:</span>
             <div id="lobby-level-picker" class="level-picker level-picker-compact"></div>
@@ -104,6 +112,7 @@
             <fieldset class="setting">
               <legend>Extras</legend>
               <label><input type="checkbox" name="nitro"> 🔥 Nitro: 5 in a row jumps a segment</label>
+              <label><input type="checkbox" name="mystery"> ❓ Mystery number: some sums hide a number (7 + ? = 12)</label>
             </fieldset>
             <fieldset class="setting">
               <legend>Theme</legend>
@@ -193,12 +202,14 @@
         <h1 class="title" id="podium-title">🏁 Race over!</h1>
         <div id="podium" class="podium"></div>
         <p id="podium-fastest" class="podium-fastest hidden"></p>
+        <p id="podium-best" class="podium-fastest podium-best hidden"></p>
         <div class="results-wrap">
           <table class="results">
             <thead><tr><th>#</th><th>Racer</th><th id="results-score-head">Time</th><th><span class="long">Accuracy</span><span class="short">Acc.</span></th><th>Streak</th><th class="col-fast">Fastest</th></tr></thead>
             <tbody id="results-body"></tbody>
           </table>
         </div>
+        <div id="podium-season" class="season hidden"></div>
         <div class="podium-actions">
           <button id="race-again-btn" class="btn btn-primary btn-big" type="button">🔁 Race again</button>
           <button id="garage-btn" class="btn btn-secondary" type="button">🔧 Back to garage</button>

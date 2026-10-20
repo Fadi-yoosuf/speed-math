@@ -272,6 +272,25 @@ function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registr
       case 'set_handicap':
         result = room.setHandicap(conn.playerId, payload.playerId, payload.segments);
         break;
+      case 'kick_player': {
+        // Detach the kicked player's connections first so they do not get the
+        // room_state that removePlayer broadcasts.
+        const victims = [...connectionsFor(room.code)].filter((c) => c.playerId === payload.playerId);
+        result = room.kick(conn.playerId, payload.playerId);
+        if (result.ok) {
+          for (const v of victims) {
+            connectionsFor(room.code).delete(v);
+            v.roomCode = null;
+            v.playerId = null;
+            v.role = null;
+            sendError(v.ws, 'The host removed you from the race', 'KICKED');
+          }
+        }
+        break;
+      }
+      case 'reset_season':
+        result = room.resetSeason(conn.playerId);
+        break;
       case 'start_race':
         result = room.start(conn.playerId);
         break;
@@ -375,8 +394,19 @@ module.exports = { startServer, createApp, lanAddress, RateBucket, normalisePubl
 
 if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
-  startServer({ port }).catch((err) => {
-    console.error('Failed to start:', err.message);
-    process.exit(1);
-  });
+  startServer({ port })
+    .then((srv) => {
+      // Graceful shutdown for Docker / hosted platforms: close sockets, exit.
+      const stop = (signal) => {
+        console.log(`\n${signal} received, shutting down…`);
+        srv.close().then(() => process.exit(0));
+        setTimeout(() => process.exit(0), 3000).unref();
+      };
+      process.on('SIGTERM', () => stop('SIGTERM'));
+      process.on('SIGINT', () => stop('SIGINT'));
+    })
+    .catch((err) => {
+      console.error('Failed to start:', err.message);
+      process.exit(1);
+    });
 }

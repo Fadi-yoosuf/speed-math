@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   mode: 'race', // 'race': first to N segments; 'sprint': most correct in sprintSec
   sprintSec: 60,
   theme: 'cars',
+  mystery: false, // some sums hide an operand: 7 + ? = 12
 });
 
 function fail(message) {
@@ -91,6 +92,7 @@ function validateSettings(input, base = DEFAULT_SETTINGS) {
     if (!THEMES.includes(input.theme)) return fail('unknown theme');
     out.theme = input.theme;
   }
+  if ('mystery' in input) out.mystery = Boolean(input.mystery);
   return { ok: true, settings: out };
 }
 
@@ -171,6 +173,10 @@ function parseMessage(raw) {
       if (!level.ok) return level;
       return { ok: true, type: msg.type, payload: { level: level.level } };
     }
+    case 'kick_player': {
+      if (typeof p.playerId !== 'string' || p.playerId.length === 0 || p.playerId.length > 32) return fail('bad player');
+      return { ok: true, type: msg.type, payload: { playerId: p.playerId } };
+    }
     case 'set_handicap': {
       if (typeof p.playerId !== 'string' || p.playerId.length === 0 || p.playerId.length > 32) return fail('bad player');
       const segments = Number(p.segments);
@@ -188,6 +194,7 @@ function parseMessage(raw) {
     case 'end_race':
     case 'race_again':
     case 'back_to_lobby':
+    case 'reset_season':
     case 'leave_room':
     case 'ping':
       return { ok: true, type: msg.type, payload: {} };

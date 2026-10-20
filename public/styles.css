@@ -394,3 +394,20 @@ body[data-theme="boats"] .lane { border-bottom: 2px dotted rgba(224,242,254,0.6)
 body.tv[data-theme="rockets"] .track::after, body.tv[data-theme="horses"] .track::after, body.tv[data-theme="boats"] .track::after { font-size: 3rem; right: 10px; }
 body.tv .podium { flex-wrap: wrap; }
 body.tv .tv-fastest { flex-basis: 100%; text-align: center; font-size: 1.3rem; margin: 12px 0 0; }
+
+/* ---------- milestone 5: season, player panel, mystery sums, practice best ---------- */
+.season { margin-top: 12px; background: #fff7ed; border: 2px solid #fed7aa; border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px; text-align: left; }
+.season h3 { margin: 0 0 4px; font-size: 0.9rem; color: #9a3412; }
+.season-row { display: grid; grid-template-columns: 2em 1fr auto auto; gap: 8px; align-items: center; font-weight: 700; font-size: 0.95rem; }
+.season-row.you { color: var(--primary-2); }
+.season-row .pos { color: var(--ink-2); }
+.season-row .pts { font-variant-numeric: tabular-nums; }
+.season-row .wins { font-size: 0.85rem; }
+.season .btn-ghost { justify-self: start; margin-top: 4px; color: var(--ink-2); }
+.handicap-row { grid-template-columns: 1fr auto auto auto auto; }
+.handicap-row.no-handicap { grid-template-columns: 1fr auto; }
+.handicap-row .kbtn { width: 34px; height: 34px; border-radius: 10px; border: 2px solid #fecaca; background: #fee2e2; color: #991b1b; font-weight: 900; cursor: pointer; }
+.question.long { font-size: clamp(1.7rem, 7.5vw, 3rem); letter-spacing: 0.02em; }
+.practice-best { margin: -6px 0 0; text-align: center; }
+.podium-best { color: var(--primary-2); }
+.tv-season { text-align: center; font-size: 1.2rem; font-weight: 700; color: #fde68a; margin-top: -6px; }

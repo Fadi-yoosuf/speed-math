@@ -7,6 +7,7 @@
 
   const prefStore = SM.storage('local', 'speedmath.prefs');
   const sessionStore = SM.storage('session', 'speedmath.session');
+  const bestStore = SM.storage('local', 'speedmath.best'); // practice personal bests per level
 
   const prefs = Object.assign(
     { name: '', car: { emoji: CARS[0], colour: COLOURS[Math.floor(Math.random() * COLOURS.length)] }, level: 2, muted: false },
@@ -106,8 +107,8 @@
         leaveLocally();
         break;
       case 'error':
-        toast(msg.message);
-        if (msg.code === 'ROOM_NOT_FOUND') leaveLocally();
+        toast(msg.message, msg.code === 'KICKED' ? 5000 : 2600);
+        if (msg.code === 'ROOM_NOT_FOUND' || msg.code === 'KICKED') leaveLocally();
         break;
       default:
         break;
@@ -148,7 +149,7 @@
       renderRace();
       showScreen('race');
     } else if (room.phase === 'finished') {
-      renderPodium(room.ranking || [], { mode: room.mode });
+      renderPodium(room.ranking || [], { mode: room.mode, season: room.season });
       showScreen('podium');
     }
   }
@@ -198,7 +199,20 @@
     prefs.level = Number(b.dataset.level);
     savePrefs();
     renderPickers();
+    renderPracticeBest();
   });
+
+  function bestFor(level) {
+    const all = bestStore.get() || {};
+    return all[level] || null;
+  }
+  function renderPracticeBest() {
+    const best = bestFor(prefs.level);
+    const el = $('practice-best');
+    el.classList.toggle('hidden', !best);
+    if (best) el.textContent = `Your best practice run at ${LEVELS[prefs.level].emoji} ${LEVELS[prefs.level].name}: ${formatTime(best.timeMs)}`;
+  }
+  renderPracticeBest();
   $('name-input').addEventListener('input', () => {
     prefs.name = $('name-input').value;
     savePrefs();
@@ -305,8 +319,37 @@
     $('settings-card').classList.toggle('readonly', !host);
     $('settings-owner').textContent = host ? '(you are the host ⭐)' : '(set by the host)';
     syncSettingsForm(room.settings);
-    renderHandicaps();
+    renderPlayersPanel();
+    renderSeason($('season'), room.season, { host, lobby: true });
   }
+
+  // Season standings: points over the races played in this room.
+  function renderSeason(box, season, { host = false, lobby = false } = {}) {
+    if (!season || season.races === 0) {
+      box.classList.add('hidden');
+      box.innerHTML = '';
+      return;
+    }
+    const theme = ctx().settings.theme;
+    const rows = season.standings
+      .map(
+        (s, i) => `<div class="season-row ${s.playerId === state.you ? 'you' : ''}">
+          <span class="pos">${i + 1}.</span>
+          <span class="who">${spriteFor(s.car, theme)} ${escapeHtml(s.name)}</span>
+          <span class="pts">${s.points} pt${s.points === 1 ? '' : 's'}</span>
+          <span class="wins">${s.wins > 0 ? `🏆×${s.wins}` : ''}</span>
+        </div>`
+      )
+      .join('');
+    box.innerHTML = `<h3>🏆 Season standings <span class="muted">after ${season.races} race${season.races === 1 ? '' : 's'}</span></h3>${rows}${
+      host && lobby ? '<button id="new-season-btn" class="btn btn-small btn-ghost" type="button">Start a new season</button>' : ''
+    }`;
+    box.classList.remove('hidden');
+  }
+  $('season').addEventListener('click', (e) => {
+    if (!e.target.closest('#new-season-btn')) return;
+    if (confirm('Reset everyone\'s season points?')) sock.send('reset_season');
+  });
 
   function syncSettingsForm(s) {
     const card = $('settings-card');
@@ -323,6 +366,7 @@
       el.checked = el.value === s.mode;
     });
     card.querySelector('input[name="nitro"]').checked = Boolean(s.nitro);
+    card.querySelector('input[name="mystery"]').checked = Boolean(s.mystery);
     const sprint = card.querySelector('select[name="sprintSec"]');
     if (document.activeElement !== sprint) sprint.value = String(s.sprintSec);
     const theme = card.querySelector('select[name="theme"]');
@@ -354,6 +398,7 @@
       partial.sprintSec = Number(el.value);
       partial.mode = 'sprint';
     } else if (el.name === 'nitro') partial.nitro = el.checked;
+    else if (el.name === 'mystery') partial.mystery = el.checked;
     else if (el.name === 'theme') partial.theme = el.value;
     else if (el.name === 'flagTimerSec') {
       const v = Math.max(5, Math.min(120, Math.round(Number(el.value) / 5) * 5 || 20));
@@ -363,32 +408,41 @@
     sock.send('update_settings', { settings: partial });
   });
 
-  // Head starts: host-only −/+ per player, race mode only.
-  function renderHandicaps() {
+  // Host-only player panel: head starts (race mode) and removing a player.
+  function renderPlayersPanel() {
     const room = state.room;
     const box = $('handicaps');
-    const show = isHost() && room.settings.mode === 'race' && room.players.length > 1;
+    const race = room.settings.mode === 'race';
+    const show = isHost() && room.players.length > 1;
     box.classList.toggle('hidden', !show);
     if (!show) return;
     box.innerHTML =
-      '<h3>Head starts (segments)</h3>' +
+      `<h3>Players${race ? ' · head starts (segments)' : ''}</h3>` +
       room.players
         .map(
-          (p) => `<div class="handicap-row" data-id="${p.id}">
-            <span>${spriteFor(p.car, room.settings.theme)} ${escapeHtml(p.name)}</span>
-            <button type="button" class="hbtn" data-delta="-1" ${p.handicap <= 0 ? 'disabled' : ''}>−</button>
-            <span class="hval">${p.handicap > 0 ? `+${p.handicap}` : '0'}</span>
-            <button type="button" class="hbtn" data-delta="1" ${p.handicap >= 5 ? 'disabled' : ''}>+</button>
+          (p) => `<div class="handicap-row ${race ? '' : 'no-handicap'}" data-id="${p.id}">
+            <span>${spriteFor(p.car, room.settings.theme)} ${escapeHtml(p.name)}${p.id === state.you ? ' <span class="muted">(you)</span>' : ''}</span>
+            <button type="button" class="hbtn" data-delta="-1" ${p.handicap <= 0 ? 'disabled' : ''} ${race ? '' : 'hidden'}>−</button>
+            <span class="hval" ${race ? '' : 'hidden'}>${p.handicap > 0 ? `+${p.handicap}` : '0'}</span>
+            <button type="button" class="hbtn" data-delta="1" ${p.handicap >= 5 ? 'disabled' : ''} ${race ? '' : 'hidden'}>+</button>
+            ${p.id === state.you ? '<span></span>' : `<button type="button" class="kbtn" data-kick="1" title="Remove ${escapeHtml(p.name)}">✕</button>`}
           </div>`
         )
         .join('');
   }
   $('handicaps').addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-delta]');
-    if (!b || !isHost()) return;
-    const row = b.closest('.handicap-row');
+    if (!isHost()) return;
+    const row = e.target.closest('.handicap-row');
+    if (!row) return;
     const player = state.room.players.find((p) => p.id === row.dataset.id);
     if (!player) return;
+    const kick = e.target.closest('button[data-kick]');
+    if (kick) {
+      if (confirm(`Remove ${player.name} from the race?`)) sock.send('kick_player', { playerId: player.id });
+      return;
+    }
+    const b = e.target.closest('button[data-delta]');
+    if (!b) return;
     const segments = Math.max(0, Math.min(5, player.handicap + Number(b.dataset.delta)));
     sock.send('set_handicap', { playerId: player.id, segments });
   });
@@ -481,6 +535,7 @@
       return;
     }
     $('question-text').textContent = q.text;
+    $('question-text').classList.toggle('long', q.text.length > 8);
     if (auto) {
       slots.innerHTML = Array.from({ length: q.answerLength }, (_, i) => {
         const ch = state.typed[i] || '';
@@ -666,7 +721,7 @@
   // ---- podium -----------------------------------------------------------------
   let lastPodiumKey = null;
   function onRaceFinished(msg) {
-    renderPodium(msg.ranking, { mode: msg.mode });
+    renderPodium(msg.ranking, { mode: msg.mode, season: msg.season });
     showScreen('podium');
     const key = msg.ranking.map((r) => `${r.playerId}:${r.timeMs}:${r.correct}`).join(',');
     if (key !== lastPodiumKey) {
@@ -685,7 +740,7 @@
     return r.finished ? formatTime(r.timeMs) : `${r.progress}/${r.total} segments`;
   }
 
-  function renderPodium(ranking, { mode = 'race', practice = false } = {}) {
+  function renderPodium(ranking, { mode = 'race', practice = false, season = null, best = null } = {}) {
     const theme = ctx().settings.theme;
     const medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
     const top = ranking.slice(0, 3);
@@ -717,6 +772,12 @@
     const fastest = ranking.filter((r) => r.fastestMs !== null && r.fastestMs !== undefined).sort((a, b) => a.fastestMs - b.fastestMs)[0];
     $('podium-fastest').classList.toggle('hidden', !fastest);
     if (fastest) $('podium-fastest').textContent = `⚡ Fastest answer: ${fastest.name}, ${formatFast(fastest.fastestMs)}`;
+    $('podium-best').classList.toggle('hidden', !best);
+    if (best) $('podium-best').textContent = best;
+    if (practice || !season) {
+      $('podium-season').classList.add('hidden');
+      $('podium-season').innerHTML = '';
+    } else renderSeason($('podium-season'), season);
 
     const winner = ranking[0];
     const self = me();
@@ -857,7 +918,21 @@
         handicap: 0,
       },
     ];
-    renderPodium(ranking, { mode: 'race', practice: true });
+    // Personal best per level, kept on this device only.
+    let best = null;
+    if (p.progress >= PRACTICE_LENGTH) {
+      const prev = bestFor(p.level);
+      const all = bestStore.get() || {};
+      if (!prev || p.timeMs < prev.timeMs) {
+        all[p.level] = { timeMs: p.timeMs, at: Date.now() };
+        bestStore.set(all);
+        best = prev ? `🏅 New personal best! ${formatTime(p.timeMs)} (was ${formatTime(prev.timeMs)})` : `🏅 First run at this level: ${formatTime(p.timeMs)}. Beat it next time!`;
+      } else {
+        best = `Your best at this level: ${formatTime(prev.timeMs)}. This run: ${formatTime(p.timeMs)}`;
+      }
+      renderPracticeBest();
+    }
+    renderPodium(ranking, { mode: 'race', practice: true, best });
     showScreen('podium');
     if (p.progress >= PRACTICE_LENGTH) SM.confetti($('confetti'), { count: 90, durationMs: 2500 });
   }
@@ -898,4 +973,10 @@
   };
   document.addEventListener('pointerdown', unlockAudio);
   document.addEventListener('keydown', unlockAudio);
+
+  // Installable app: the service worker keeps the pages cached so the app
+  // opens from the home screen and practice works offline.
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
 })();
