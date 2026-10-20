@@ -1,8 +1,9 @@
-/* Speed Math — player app. Screens: home → lobby → race → podium. */
+/* Speed Math — player app. Screens: home → lobby → race → podium, plus a solo
+   practice mode that runs entirely in the browser. */
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const { LEVELS, CARS, COLOURS, escapeHtml, formatTime, toast, Sounds } = SM;
+  const { LEVELS, CARS, COLOURS, NITRO_STREAK, spriteFor, applyTheme, escapeHtml, formatTime, formatFast, toast, Sounds } = SM;
 
   const prefStore = SM.storage('local', 'speedmath.prefs');
   const sessionStore = SM.storage('session', 'speedmath.session');
@@ -12,6 +13,9 @@
     prefStore.get() || {}
   );
   Sounds.setMuted(prefs.muted);
+
+  const PRACTICE_LENGTH = 20;
+  const PRACTICE_SETTINGS = { ops: ['add', 'sub', 'mul'], length: PRACTICE_LENGTH, autoSubmit: true, nitro: false, mode: 'race', theme: 'cars', sprintSec: 60 };
 
   const state = {
     room: null,
@@ -24,13 +28,21 @@
     pending: false,
     lockedUntil: 0,
     raceStartAt: null,
+    sprintEndsAt: null,
     finishedSelf: false,
     screen: 'home',
-    flagLeft: null,
+    practice: null, // solo mode, no room
   };
 
   const lobbyTrack = SM.Track($('lobby-track'));
   const raceTrack = SM.Track($('race-track'));
+
+  // What the race screen is showing: a room, or a practice session.
+  function ctx() {
+    if (state.practice) return { settings: state.practice.settings, raceLength: PRACTICE_LENGTH, mode: 'race', phase: state.practice.finished ? 'finished' : 'racing' };
+    if (state.room) return { settings: state.room.settings, raceLength: state.room.raceLength, mode: state.room.mode || state.room.settings.mode, phase: state.room.phase };
+    return { settings: PRACTICE_SETTINGS, raceLength: 20, mode: 'race', phase: 'lobby' };
+  }
 
   // ---- screens ---------------------------------------------------------------
   function showScreen(name) {
@@ -49,7 +61,7 @@
       $('conn-dot').title = 'Connected';
       const saved = sessionStore.get();
       if (state.code && state.token) sock.send('join_room', { code: state.code, token: state.token });
-      else if (saved && saved.code && saved.token) sock.send('join_room', { code: saved.code, token: saved.token });
+      else if (saved && saved.code && saved.token && !state.practice) sock.send('join_room', { code: saved.code, token: saved.token });
     },
     onClose() {
       $('conn-dot').className = 'conn-dot off';
@@ -59,6 +71,7 @@
   });
 
   function handleMessage(msg) {
+    if (state.practice && msg.type !== 'error') return; // practice ignores room traffic
     switch (msg.type) {
       case 'welcome':
         state.you = msg.playerId;
@@ -109,6 +122,7 @@
     state.code = null;
     state.question = null;
     state.joinInfo = null;
+    applyTheme('cars');
     showScreen('home');
   }
 
@@ -117,6 +131,7 @@
     const prevPhase = state.room ? state.room.phase : null;
     state.room = room;
     state.you = room.you;
+    applyTheme(room.settings.theme);
     if (room.phase === 'lobby') {
       renderLobby();
       showScreen('lobby');
@@ -125,23 +140,25 @@
         state.question = null;
         state.typed = '';
         state.finishedSelf = false;
-        state.flagLeft = null;
+        state.sprintEndsAt = null;
         $('flag-banner').classList.add('hidden');
       }
       if (room.phase === 'racing' && room.raceElapsedMs !== null) state.raceStartAt = Date.now() - room.raceElapsedMs;
+      if (room.phase === 'racing' && room.sprintRemainingMs !== null) state.sprintEndsAt = Date.now() + room.sprintRemainingMs;
       renderRace();
       showScreen('race');
     } else if (room.phase === 'finished') {
-      renderPodium(room.ranking || []);
+      renderPodium(room.ranking || [], { mode: room.mode });
       showScreen('podium');
     }
   }
 
   function me() {
+    if (state.practice) return practicePlayer();
     return state.room ? state.room.players.find((p) => p.id === state.you) || null : null;
   }
   function isHost() {
-    return Boolean(state.room && state.room.hostId === state.you);
+    return Boolean(state.room && !state.practice && state.room.hostId === state.you);
   }
 
   // ---- home ------------------------------------------------------------------
@@ -221,6 +238,7 @@
   $('name-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && $('code-input').value.trim()) joinWithCode();
   });
+  $('practice-btn').addEventListener('click', startPractice);
 
   // Prefill the code from /join/FROG or ?code=FROG
   (function prefill() {
@@ -271,11 +289,15 @@
     }
   });
 
+  function trackOpts(room) {
+    return { raceLength: room.raceLength, youId: state.you, hostId: room.hostId, lastWinnerId: room.lastWinnerId, phase: room.phase, theme: room.settings.theme, mode: room.mode, nitro: room.settings.nitro };
+  }
+
   function renderLobby() {
     const room = state.room;
     const host = isHost();
     $('player-count').textContent = `(${room.players.length}/12)`;
-    lobbyTrack.render(room.players, { raceLength: room.raceLength, youId: state.you, hostId: room.hostId, lastWinnerId: room.lastWinnerId, phase: room.phase });
+    lobbyTrack.render(room.players, trackOpts(room));
     const self = me();
     $('lobby-level-picker').innerHTML = levelButtons(self ? self.level : prefs.level, Boolean(room.settings.lockLevel));
     $('start-btn').classList.toggle('hidden', !host);
@@ -283,6 +305,7 @@
     $('settings-card').classList.toggle('readonly', !host);
     $('settings-owner').textContent = host ? '(you are the host ⭐)' : '(set by the host)';
     syncSettingsForm(room.settings);
+    renderHandicaps();
   }
 
   function syncSettingsForm(s) {
@@ -296,10 +319,19 @@
     card.querySelectorAll('input[name="autoSubmit"]').forEach((el) => {
       el.checked = (el.value === '1') === Boolean(s.autoSubmit);
     });
+    card.querySelectorAll('input[name="mode"]').forEach((el) => {
+      el.checked = el.value === s.mode;
+    });
+    card.querySelector('input[name="nitro"]').checked = Boolean(s.nitro);
+    const sprint = card.querySelector('select[name="sprintSec"]');
+    if (document.activeElement !== sprint) sprint.value = String(s.sprintSec);
+    const theme = card.querySelector('select[name="theme"]');
+    if (document.activeElement !== theme) theme.value = s.theme;
     const lock = card.querySelector('select[name="lockLevel"]');
     if (document.activeElement !== lock) lock.value = s.lockLevel ? String(s.lockLevel) : '';
     const flag = card.querySelector('input[name="flagTimerSec"]');
     if (document.activeElement !== flag) flag.value = s.flagTimerSec;
+    $('length-legend').textContent = s.mode === 'sprint' ? 'Lap length' : 'Race length';
   }
 
   $('settings-card').addEventListener('change', (e) => {
@@ -317,12 +349,48 @@
     } else if (el.name === 'length') partial.length = Number(el.value);
     else if (el.name === 'lockLevel') partial.lockLevel = el.value ? Number(el.value) : null;
     else if (el.name === 'autoSubmit') partial.autoSubmit = el.value === '1';
+    else if (el.name === 'mode') partial.mode = el.value;
+    else if (el.name === 'sprintSec') {
+      partial.sprintSec = Number(el.value);
+      partial.mode = 'sprint';
+    } else if (el.name === 'nitro') partial.nitro = el.checked;
+    else if (el.name === 'theme') partial.theme = el.value;
     else if (el.name === 'flagTimerSec') {
       const v = Math.max(5, Math.min(120, Math.round(Number(el.value) / 5) * 5 || 20));
       el.value = v;
       partial.flagTimerSec = v;
     } else return;
     sock.send('update_settings', { settings: partial });
+  });
+
+  // Head starts: host-only −/+ per player, race mode only.
+  function renderHandicaps() {
+    const room = state.room;
+    const box = $('handicaps');
+    const show = isHost() && room.settings.mode === 'race' && room.players.length > 1;
+    box.classList.toggle('hidden', !show);
+    if (!show) return;
+    box.innerHTML =
+      '<h3>Head starts (segments)</h3>' +
+      room.players
+        .map(
+          (p) => `<div class="handicap-row" data-id="${p.id}">
+            <span>${spriteFor(p.car, room.settings.theme)} ${escapeHtml(p.name)}</span>
+            <button type="button" class="hbtn" data-delta="-1" ${p.handicap <= 0 ? 'disabled' : ''}>−</button>
+            <span class="hval">${p.handicap > 0 ? `+${p.handicap}` : '0'}</span>
+            <button type="button" class="hbtn" data-delta="1" ${p.handicap >= 5 ? 'disabled' : ''}>+</button>
+          </div>`
+        )
+        .join('');
+  }
+  $('handicaps').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-delta]');
+    if (!b || !isHost()) return;
+    const row = b.closest('.handicap-row');
+    const player = state.room.players.find((p) => p.id === row.dataset.id);
+    if (!player) return;
+    const segments = Math.max(0, Math.min(5, player.handicap + Number(b.dataset.delta)));
+    sock.send('set_handicap', { playerId: player.id, segments });
   });
 
   $('lobby-level-picker').addEventListener('click', (e) => {
@@ -341,16 +409,22 @@
 
   // ---- race ------------------------------------------------------------------
   function renderRace() {
-    const room = state.room;
-    raceTrack.render(room.players, { raceLength: room.raceLength, youId: state.you, hostId: room.hostId, phase: room.phase });
+    const c = ctx();
+    if (state.practice) {
+      const p = state.practice;
+      raceTrack.render([practicePlayer()], { raceLength: PRACTICE_LENGTH, youId: 'you', phase: 'racing', theme: p.settings.theme, mode: 'race', nitro: false });
+    } else {
+      raceTrack.render(state.room.players, trackOpts(state.room));
+    }
     const self = me();
     const spectator = Boolean(self && self.spectator);
     const finished = Boolean(self && self.finished);
     $('spectator-note').classList.toggle('hidden', !spectator);
     $('question-card').classList.toggle('hidden', spectator || finished);
     $('numpad').classList.toggle('hidden', spectator || finished);
-    $('numpad').classList.toggle('auto', Boolean(room.settings.autoSubmit));
+    $('numpad').classList.toggle('auto', Boolean(c.settings.autoSubmit));
     $('end-race-btn').classList.toggle('hidden', !isHost());
+    $('quit-practice-btn').classList.toggle('hidden', !state.practice);
     if (finished) {
       $('finished-note').textContent = `🏁 You finished in ${formatTime(self.timeMs)}! Watch the others…`;
       $('finished-note').classList.remove('hidden');
@@ -360,21 +434,49 @@
   }
 
   function renderStatus() {
-    const room = state.room;
+    const c = ctx();
     const self = me();
-    const progress = self ? self.progress : 0;
-    $('race-progress').textContent = `${progress} / ${room ? room.raceLength : 20}`;
-    const streak = self ? self.streak : 0;
-    $('race-streak').textContent = streak >= 2 ? `🔥 ${streak} in a row` : '';
+    const progress = self ? self.progress || 0 : 0;
+    if (c.mode === 'sprint') {
+      const correct = self ? self.correct || 0 : 0;
+      const lap = Math.floor(correct / c.raceLength) + 1;
+      $('race-progress').textContent = `${correct} ✓ · lap ${lap}`;
+    } else {
+      $('race-progress').textContent = `${progress} / ${c.raceLength}`;
+    }
+    const streak = self ? self.streak || 0 : 0;
+    const flame = c.settings.nitro && c.mode === 'race' && streak >= NITRO_STREAK;
+    $('race-streak').textContent = streak >= 2 ? `${flame ? '🔥 NITRO ' : '🔥 '}${streak} in a row` : '';
+    renderTimer();
+  }
+
+  function renderTimer() {
+    const c = ctx();
+    if (c.mode === 'sprint') {
+      if (!state.sprintEndsAt) {
+        $('race-timer').textContent = `⏱ ${c.settings.sprintSec} s`;
+        return;
+      }
+      const left = Math.max(0, state.sprintEndsAt - Date.now());
+      $('race-timer').textContent = `⏱ ${Math.ceil(left / 1000)} s`;
+      return;
+    }
+    const self = me();
+    if (!state.raceStartAt) {
+      $('race-timer').textContent = '0.0 s';
+      return;
+    }
+    const ms = self && self.finished ? self.timeMs : Date.now() - state.raceStartAt;
+    $('race-timer').textContent = formatTime(ms);
   }
 
   function renderQuestion() {
     const q = state.question;
-    const auto = state.room && state.room.settings.autoSubmit;
+    const auto = ctx().settings.autoSubmit;
     const slots = $('answer-slots');
     slots.classList.toggle('free', !auto);
     if (!q) {
-      $('question-text').textContent = state.room && state.room.phase === 'countdown' ? 'Get ready…' : '…';
+      $('question-text').textContent = ctx().phase === 'countdown' || (state.practice && !state.raceStartAt) ? 'Get ready…' : '…';
       slots.innerHTML = '';
       return;
     }
@@ -403,6 +505,8 @@
     Sounds.play(n === 0 ? 'go' : 'tick');
     if (n === 0) {
       state.raceStartAt = Date.now();
+      const c = ctx();
+      if (c.mode === 'sprint') state.sprintEndsAt = Date.now() + c.settings.sprintSec * 1000;
       onCountdown.hide = setTimeout(() => el.classList.add('hidden'), 900);
     }
   }
@@ -419,14 +523,16 @@
     state.pending = false;
     const slots = $('answer-slots');
     if (r.correct) {
-      Sounds.play('vroom');
+      Sounds.play(r.nitro ? 'nitro' : 'vroom');
       slots.classList.add('correct');
       setTimeout(() => slots.classList.remove('correct'), 200);
       const self = me();
-      if (self) {
-        self.progress += 1;
+      if (self && !state.practice) {
+        self.progress += r.nitro ? 2 : 1;
+        self.correct = (self.correct || 0) + 1;
         self.streak = r.streak;
       }
+      if (r.nitro) nitroBurst();
       renderStatus();
     } else {
       Sounds.play('skid');
@@ -446,9 +552,19 @@
         renderQuestion();
       }, r.stallMs);
       const self = me();
-      if (self) self.streak = 0;
+      if (self && !state.practice) self.streak = 0;
       renderStatus();
     }
+  }
+
+  function nitroBurst() {
+    const el = $('nitro-burst');
+    el.classList.remove('hidden');
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    el.style.animation = '';
+    clearTimeout(nitroBurst.hide);
+    nitroBurst.hide = setTimeout(() => el.classList.add('hidden'), 950);
   }
 
   function onProgress(p) {
@@ -458,6 +574,7 @@
       if (pl) {
         pl.progress = p.progress;
         pl.streak = p.streak;
+        pl.correct = p.correct;
         if (p.finished) {
           pl.finished = true;
           pl.timeMs = p.timeMs;
@@ -479,7 +596,7 @@
     const banner = $('flag-banner');
     const tick = () => {
       if (left < 0 || state.screen !== 'race') return clearInterval(flagTicker);
-      banner.textContent = `🏁 ${winner ? escapeHtml(winner.name) : 'Someone'} finished! Race ends in ${left} s`;
+      banner.textContent = `🏁 ${winner ? winner.name : 'Someone'} finished! Race ends in ${left} s`;
       banner.classList.remove('hidden');
       left -= 1;
     };
@@ -488,16 +605,15 @@
   }
 
   setInterval(() => {
-    if (state.screen !== 'race' || !state.raceStartAt || state.room.phase !== 'racing') return;
-    const self = me();
-    const ms = self && self.finished ? self.timeMs : Date.now() - state.raceStartAt;
-    $('race-timer').textContent = formatTime(ms);
+    if (state.screen !== 'race') return;
+    if (ctx().phase !== 'racing') return;
+    renderTimer();
   }, 100);
 
   // ---- answer entry ------------------------------------------------------------
   function canType() {
     if (state.screen !== 'race' || !state.question || state.pending) return false;
-    if (!state.room || state.room.phase !== 'racing') return false;
+    if (ctx().phase !== 'racing') return false;
     if (Date.now() < state.lockedUntil) return false;
     const self = me();
     if (!self || self.spectator || self.finished) return false;
@@ -507,12 +623,13 @@
   function submit() {
     if (!state.typed) return;
     state.pending = true;
-    sock.send('answer', { questionIndex: state.question.index, value: state.typed });
+    if (state.practice) practiceCheck(state.typed);
+    else sock.send('answer', { questionIndex: state.question.index, value: state.typed });
   }
 
   function pressKey(key) {
     if (!canType()) return;
-    const auto = state.room.settings.autoSubmit;
+    const auto = ctx().settings.autoSubmit;
     if (key === 'back') {
       state.typed = state.typed.slice(0, -1);
     } else if (key === 'go') {
@@ -549,20 +666,27 @@
   // ---- podium -----------------------------------------------------------------
   let lastPodiumKey = null;
   function onRaceFinished(msg) {
-    renderPodium(msg.ranking);
+    renderPodium(msg.ranking, { mode: msg.mode });
     showScreen('podium');
-    const key = msg.ranking.map((r) => `${r.playerId}:${r.timeMs}`).join(',');
+    const key = msg.ranking.map((r) => `${r.playerId}:${r.timeMs}:${r.correct}`).join(',');
     if (key !== lastPodiumKey) {
       lastPodiumKey = key;
       const winner = msg.ranking[0];
-      if (winner && winner.finished && winner.playerId === state.you) {
+      const won = winner && winner.playerId === state.you && (winner.finished || (msg.mode === 'sprint' && winner.correct > 0));
+      if (won) {
         SM.confetti($('confetti'));
         Sounds.play('cheer');
       }
     }
   }
 
-  function renderPodium(ranking) {
+  function scoreText(r, mode) {
+    if (mode === 'sprint') return `${r.correct} correct`;
+    return r.finished ? formatTime(r.timeMs) : `${r.progress}/${r.total} segments`;
+  }
+
+  function renderPodium(ranking, { mode = 'race', practice = false } = {}) {
+    const theme = ctx().settings.theme;
     const medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
     const top = ranking.slice(0, 3);
     const order = [top[1], top[0], top[2]].filter(Boolean);
@@ -570,37 +694,189 @@
       .map(
         (r) => `<div class="podium-step p${r.place}">
           <div class="medal">${medals[r.place]}</div>
-          <div class="car" style="background:${r.car.colour}">${r.car.emoji}</div>
+          <div class="car" style="background:${r.car.colour}">${spriteFor(r.car, theme)}</div>
           <div class="pname">${escapeHtml(r.name)}</div>
-          <div class="ptime">${r.finished ? formatTime(r.timeMs) : `${r.progress}/${r.total} sums`}</div>
+          <div class="ptime">${scoreText(r, mode)}</div>
           <div class="block"></div>
         </div>`
       )
       .join('');
+    $('results-score-head').textContent = mode === 'sprint' ? 'Correct' : 'Time';
     $('results-body').innerHTML = ranking
       .map(
         (r) => `<tr class="${r.playerId === state.you ? 'you' : ''}">
           <td>${medals[r.place] || r.place}</td>
-          <td>${r.car.emoji} ${escapeHtml(r.name)} <span class="muted">${LEVELS[r.level].emoji}</span></td>
-          <td>${r.finished ? formatTime(r.timeMs) : `${r.progress}/${r.total}`}</td>
+          <td>${spriteFor(r.car, theme)} ${escapeHtml(r.name)} <span class="muted">${LEVELS[r.level].emoji}${r.handicap > 0 ? ` +${r.handicap}` : ''}${r.nitros > 0 ? ` 🔥${r.nitros}` : ''}</span></td>
+          <td>${mode === 'sprint' ? r.correct : r.finished ? formatTime(r.timeMs) : `${r.progress}/${r.total}`}</td>
           <td>${r.accuracy === null ? '—' : `${Math.round(r.accuracy * 100)}%`}</td>
           <td>${r.bestStreak}</td>
+          <td class="col-fast">${formatFast(r.fastestMs)}</td>
         </tr>`
       )
       .join('');
+    const fastest = ranking.filter((r) => r.fastestMs !== null && r.fastestMs !== undefined).sort((a, b) => a.fastestMs - b.fastestMs)[0];
+    $('podium-fastest').classList.toggle('hidden', !fastest);
+    if (fastest) $('podium-fastest').textContent = `⚡ Fastest answer: ${fastest.name}, ${formatFast(fastest.fastestMs)}`;
+
     const winner = ranking[0];
     const self = me();
-    if (winner && winner.playerId === state.you && winner.finished) $('podium-title').textContent = '🏆 You won!';
+    const winnerReal = winner && (winner.finished || (mode === 'sprint' && winner.correct > 0));
+    if (practice) $('podium-title').textContent = '🎯 Practice done!';
+    else if (winnerReal && winner.playerId === state.you) $('podium-title').textContent = '🏆 You won!';
     else if (self && self.spectator) $('podium-title').textContent = '🏁 Race over! You race next.';
-    else $('podium-title').textContent = winner && winner.finished ? `🏁 ${winner.name} wins!` : '🏁 Race over!';
+    else $('podium-title').textContent = winnerReal ? `🏁 ${winner.name} wins!` : '🏁 Race over!';
     const host = isHost();
-    $('race-again-btn').classList.toggle('hidden', !host);
-    $('garage-btn').classList.toggle('hidden', !host);
-    $('podium-waiting').classList.toggle('hidden', host);
+    $('race-again-btn').classList.toggle('hidden', practice || !host);
+    $('garage-btn').classList.toggle('hidden', practice || !host);
+    $('practice-again-btn').classList.toggle('hidden', !practice);
+    $('practice-home-btn').classList.toggle('hidden', !practice);
+    $('podium-waiting').classList.toggle('hidden', practice || host);
   }
 
   $('race-again-btn').addEventListener('click', () => sock.send('race_again'));
   $('garage-btn').addEventListener('click', () => sock.send('back_to_lobby'));
+
+  // ---- practice: solo, no room, checked in the browser -------------------------
+  function practicePlayer() {
+    const p = state.practice;
+    return { id: 'you', name: p.name, car: p.car, level: p.level, progress: p.progress, correct: p.correct, streak: p.streak, finished: p.finished, timeMs: p.timeMs, spectator: false, connected: true };
+  }
+
+  function startPractice() {
+    const id = identity();
+    if (!id) return;
+    if (!window.SMQuestions) return toast('Practice mode did not load; refresh the page');
+    if (state.room) {
+      sock.send('leave_room');
+      sessionStore.clear();
+      state.room = null;
+      state.code = null;
+      state.token = null;
+    }
+    const settings = { ...PRACTICE_SETTINGS, theme: prefs.theme || 'cars' };
+    state.practice = {
+      settings,
+      questions: SMQuestions.generate(Date.now(), id.level, settings.ops, PRACTICE_LENGTH),
+      name: id.name,
+      car: id.car,
+      level: id.level,
+      index: 0,
+      progress: 0,
+      correct: 0,
+      wrong: 0,
+      streak: 0,
+      best: 0,
+      fastest: null,
+      shownAt: null,
+      finished: false,
+      timeMs: null,
+    };
+    state.question = null;
+    state.typed = '';
+    state.pending = false;
+    state.lockedUntil = 0;
+    state.raceStartAt = null;
+    state.sprintEndsAt = null;
+    $('flag-banner').classList.add('hidden');
+    applyTheme(settings.theme);
+    renderRace();
+    showScreen('race');
+    let n = 3;
+    const tick = () => {
+      if (!state.practice) return;
+      onCountdown(n);
+      if (n === 0) practiceNext();
+      else {
+        n -= 1;
+        state.practice.countdownTimer = setTimeout(tick, 1000);
+      }
+    };
+    tick();
+  }
+
+  function practiceNext() {
+    const p = state.practice;
+    const q = p.questions[p.index];
+    if (!q) return practiceFinish();
+    state.question = { index: p.index, text: q.text, answerLength: String(q.answer).length, total: p.questions.length };
+    p.shownAt = Date.now();
+    state.typed = '';
+    state.pending = false;
+    renderQuestion();
+    renderStatus();
+  }
+
+  function practiceCheck(value) {
+    const p = state.practice;
+    const q = p.questions[p.index];
+    const correct = Number(value) === q.answer;
+    if (correct) {
+      p.index += 1;
+      p.correct += 1;
+      p.progress += 1;
+      p.streak += 1;
+      p.best = Math.max(p.best, p.streak);
+      const dt = Date.now() - p.shownAt;
+      if (p.fastest === null || dt < p.fastest) p.fastest = dt;
+    } else {
+      p.wrong += 1;
+      p.streak = 0;
+    }
+    const finished = correct && p.progress >= PRACTICE_LENGTH;
+    onAnswerResult({ index: state.question.index, correct, stallMs: correct ? 0 : 1500, streak: p.streak, nitro: false });
+    raceTrack.update('you', { progress: p.progress, total: PRACTICE_LENGTH, streak: p.streak, skid: !correct, finished });
+    if (finished) {
+      p.finished = true;
+      p.timeMs = Date.now() - state.raceStartAt;
+      Sounds.play('cheer');
+      setTimeout(practiceFinish, 350);
+    } else if (correct) practiceNext();
+  }
+
+  function practiceFinish() {
+    const p = state.practice;
+    if (!p) return;
+    p.finished = true;
+    const ranking = [
+      {
+        place: 1,
+        playerId: 'you',
+        name: p.name,
+        car: p.car,
+        level: p.level,
+        finished: p.progress >= PRACTICE_LENGTH,
+        timeMs: p.timeMs,
+        progress: p.progress,
+        total: PRACTICE_LENGTH,
+        correct: p.correct,
+        wrong: p.wrong,
+        accuracy: p.correct + p.wrong > 0 ? p.correct / (p.correct + p.wrong) : null,
+        bestStreak: p.best,
+        fastestMs: p.fastest,
+        nitros: 0,
+        handicap: 0,
+      },
+    ];
+    renderPodium(ranking, { mode: 'race', practice: true });
+    showScreen('podium');
+    if (p.progress >= PRACTICE_LENGTH) SM.confetti($('confetti'), { count: 90, durationMs: 2500 });
+  }
+
+  function stopPractice() {
+    if (state.practice && state.practice.countdownTimer) clearTimeout(state.practice.countdownTimer);
+    state.practice = null;
+    state.question = null;
+    state.raceStartAt = null;
+    $('countdown').classList.add('hidden');
+    applyTheme('cars');
+    showScreen('home');
+  }
+  $('quit-practice-btn').addEventListener('click', stopPractice);
+  $('practice-home-btn').addEventListener('click', stopPractice);
+  $('practice-again-btn').addEventListener('click', () => {
+    stopPractice();
+    startPractice();
+  });
 
   // ---- sound / mute ----------------------------------------------------------
   function renderMute() {

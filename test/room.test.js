@@ -2,14 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { Room, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS } = require('../server/room');
+const { Room, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS, sprintQuestionCount } = require('../server/room');
 const { RoomRegistry } = require('../server/rooms');
 const { STALL_MS, MAX_PLAYERS } = require('../server/protocol');
 const { fakeDeps, recorder, car } = require('./helpers');
 
 function setup({ settings, players = ['Ava', 'Ben', 'Cal'], levels = {} } = {}) {
   const deps = fakeDeps();
-  const room = new Room({ code: 'FROG', settings: { length: 10, flagTimerSec: 20, ...settings }, deps });
+  const room = new Room({ code: 'FROG', settings: { length: 10, flagTimerSec: 20, nitro: false, ...settings }, deps });
   const rec = recorder(room);
   const ids = {};
   for (const name of players) {
@@ -112,7 +112,7 @@ test('correct answers move the car; the last one records a finish time', () => {
   const qs = room.questionsFor(1);
   deps.advance(2500);
   const r = room.answer(ids.Ava, 0, qs[0].answer);
-  assert.deepEqual(r, { ok: true, correct: true, stallMs: 0 });
+  assert.deepEqual(r, { ok: true, correct: true, stallMs: 0, nitro: false });
   const prog = rec.ofType('progress');
   assert.equal(prog.length, 1);
   assert.equal(prog[0].progress, 1);
@@ -135,7 +135,7 @@ test('a wrong answer skids: stall, streak reset, same question stays', () => {
   assert.equal(room.getPlayer(ids.Ava).streak, 2);
   rec.clear();
   const wrong = room.answer(ids.Ava, 2, qs[2].answer + 1);
-  assert.deepEqual(wrong, { ok: true, correct: false, stallMs: STALL_MS });
+  assert.deepEqual(wrong, { ok: true, correct: false, stallMs: STALL_MS, nitro: false });
   const p = room.getPlayer(ids.Ava);
   assert.equal(p.progress, 2);
   assert.equal(p.streak, 0);
@@ -351,4 +351,121 @@ test('registry hands out unique kid-safe codes, caps rooms and sweeps expired on
   deps.advance(EMPTY_ROOM_TTL_MS);
   assert.deepEqual(registry.sweep(), [a.code]);
   assert.equal(registry.size, 0);
+});
+
+// ---- milestone 4 ---------------------------------------------------------------
+
+test('nitro: every 5th correct answer in a row jumps an extra segment and lights a flame', () => {
+  const { room, ids, deps, rec } = setup({ players: ['Ava'], settings: { nitro: true, length: 20 } });
+  startRace(room, deps, ids.Ava);
+  const qs = room.questionsFor(1);
+  for (let i = 0; i < 4; i++) room.answer(ids.Ava, i, qs[i].answer);
+  assert.equal(room.getPlayer(ids.Ava).progress, 4);
+  rec.clear();
+  const r = room.answer(ids.Ava, 4, qs[4].answer);
+  assert.equal(r.nitro, true);
+  assert.equal(room.getPlayer(ids.Ava).progress, 6, '5 answers, 6 segments');
+  assert.equal(rec.ofType('progress')[0].nitro, true);
+  assert.equal(rec.sentTo(ids.Ava, 'answer_result')[0].nitro, true);
+  assert.equal(rec.lastQuestion(ids.Ava).index, 5, 'questions keep counting one by one');
+  // a wrong answer resets the streak, so the next boost needs 5 more
+  room.answer(ids.Ava, 5, qs[5].answer + 1);
+  deps.advance(2000);
+  for (let i = 5; i < 10; i++) assert.equal(room.answer(ids.Ava, i, qs[i].answer).nitro, i === 9);
+  assert.equal(room.getPlayer(ids.Ava).progress, 12);
+  assert.equal(room.getPlayer(ids.Ava).nitros, 2);
+  // the boost can cross the line: 20 segments after 17 answers
+  for (let i = 10; i < 17; i++) room.answer(ids.Ava, i, qs[i].answer);
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.ranking[0].progress, 20);
+  assert.equal(room.ranking[0].correct, 17);
+  assert.equal(room.ranking[0].nitros, 3);
+});
+
+test('nitro can be switched off by the host', () => {
+  const { room, ids, deps } = setup({ players: ['Ava'], settings: { nitro: true } });
+  assert.equal(room.updateSettings(ids.Ava, { nitro: false }).ok, true);
+  startRace(room, deps, ids.Ava);
+  const qs = room.questionsFor(1);
+  for (let i = 0; i < 5; i++) room.answer(ids.Ava, i, qs[i].answer);
+  assert.equal(room.getPlayer(ids.Ava).progress, 5);
+});
+
+test('head starts: the host can put a car up to 5 segments ahead for the next race', () => {
+  const { room, ids, deps, rec } = setup({ players: ['Ava', 'Ben'] });
+  assert.equal(room.setHandicap(ids.Ben, ids.Ben, 2).ok, false, 'not the host');
+  assert.equal(room.setHandicap(ids.Ava, ids.Ben, 6).ok, false, 'too much');
+  assert.equal(room.setHandicap(ids.Ava, 'nobody', 1).ok, false);
+  assert.equal(room.setHandicap(ids.Ava, ids.Ben, 3).ok, true);
+  assert.equal(room.toState().players.find((p) => p.id === ids.Ben).handicap, 3);
+  startRace(room, deps, ids.Ava);
+  assert.equal(room.getPlayer(ids.Ben).progress, 3);
+  assert.equal(room.getPlayer(ids.Ava).progress, 0);
+  assert.equal(rec.lastQuestion(ids.Ben).index, 0, 'still starts at question 0');
+  assert.equal(room.setHandicap(ids.Ava, ids.Ben, 0).ok, false, 'not during a race');
+  const qs = room.questionsFor(1);
+  for (let i = 0; i < 7; i++) room.answer(ids.Ben, i, qs[i].answer);
+  assert.equal(room.getPlayer(ids.Ben).finishedAt !== null, true, '3 + 7 = 10 segments');
+  assert.equal(room.ranking, null);
+  deps.advance(20000);
+  assert.equal(room.ranking[0].name, 'Ben');
+  assert.equal(room.ranking[0].handicap, 3);
+  assert.equal(room.ranking[0].correct, 7);
+});
+
+test('fastest answer is recorded per race', () => {
+  const { room, ids, deps } = setup({ players: ['Ava'] });
+  startRace(room, deps, ids.Ava);
+  const qs = room.questionsFor(1);
+  deps.advance(2400);
+  room.answer(ids.Ava, 0, qs[0].answer);
+  deps.advance(800);
+  room.answer(ids.Ava, 1, qs[1].answer);
+  deps.advance(1500);
+  room.answer(ids.Ava, 2, qs[2].answer + 1); // wrong answers do not count
+  deps.advance(1600);
+  room.answer(ids.Ava, 2, qs[2].answer);
+  assert.equal(room.getPlayer(ids.Ava).fastestMs, 800);
+  for (let i = 3; i < 10; i++) {
+    deps.advance(5000);
+    room.answer(ids.Ava, i, qs[i].answer);
+  }
+  assert.equal(room.ranking[0].fastestMs, 800);
+});
+
+test('sprint mode: most correct answers when the clock runs out, cars lap the track', () => {
+  const { room, ids, deps, rec } = setup({ players: ['Ava', 'Ben', 'Cal'], settings: { mode: 'sprint', sprintSec: 30, length: 10, nitro: true } });
+  startRace(room, deps, ids.Ava);
+  assert.equal(rec.lastQuestion(ids.Ava).total, sprintQuestionCount(30));
+  assert.ok(sprintQuestionCount(30) > 30);
+  assert.equal(room.toState().sprintRemainingMs, 30000);
+  const qs = room.questionsFor(1);
+  deps.advance(1000);
+  for (let i = 0; i < 12; i++) assert.equal(room.answer(ids.Ava, i, qs[i].answer).nitro, false, 'no nitro in sprint');
+  assert.equal(room.getPlayer(ids.Ava).finishedAt, null, 'nobody finishes early in a sprint');
+  assert.equal(rec.ofType('flag_timer').length, 0);
+  assert.equal(room.getPlayer(ids.Ava).progress, 12, 'progress keeps counting past the track length');
+  for (let i = 0; i < 7; i++) room.answer(ids.Ben, i, qs[i].answer);
+  for (let i = 0; i < 7; i++) room.answer(ids.Cal, i, qs[i].answer);
+  room.answer(ids.Cal, 7, qs[7].answer + 1);
+  assert.equal(room.toState().sprintRemainingMs, 29000);
+  deps.advance(28999);
+  assert.equal(room.phase, 'racing');
+  deps.advance(1);
+  assert.equal(room.phase, 'finished');
+  assert.equal(room.endReason, 'time');
+  const ranking = rec.ofType('race_finished')[0].ranking;
+  assert.deepEqual(ranking.map((r) => [r.place, r.name, r.correct, r.laps]), [[1, 'Ava', 12, 1], [2, 'Ben', 7, 0], [3, 'Cal', 7, 0]]);
+  assert.equal(ranking[2].wrong, 1, 'ties broken by fewer mistakes');
+  assert.equal(ranking[0].finished, false);
+  assert.equal(room.lastWinnerId, ids.Ava);
+  assert.equal(deps.pendingTimers(), 0);
+});
+
+test('host can end a sprint early', () => {
+  const { room, ids, deps } = setup({ players: ['Ava'], settings: { mode: 'sprint', sprintSec: 60 } });
+  startRace(room, deps, ids.Ava);
+  assert.equal(room.endRace(ids.Ava).ok, true);
+  assert.equal(room.endReason, 'host');
+  assert.equal(room.toState().sprintRemainingMs, null);
 });

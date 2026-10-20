@@ -38,6 +38,14 @@
           break;
         case 'progress':
           track.update(msg.playerId, msg);
+          if (room) {
+            const pl = room.players.find((x) => x.id === msg.playerId);
+            if (pl) {
+              pl.progress = msg.progress;
+              pl.correct = msg.correct;
+              pl.streak = msg.streak;
+            }
+          }
           if (msg.finished && room) {
             const p = room.players.find((x) => x.id === msg.playerId);
             if (p) $('tv-status').textContent = `🏁 ${p.name} finished in ${SM.formatTime(msg.timeMs)}!`;
@@ -47,7 +55,8 @@
           startFlagTicker(msg.seconds);
           break;
         case 'race_finished':
-          renderPodium(msg.ranking);
+          clearInterval(sprintTicker);
+          renderPodium(msg.ranking, { mode: msg.mode });
           break;
         case 'error':
           SM.toast(msg.message);
@@ -76,29 +85,49 @@
     flagTimer = setInterval(tick, 1000);
   }
 
+  let sprintTicker = null;
+  function startSprintTicker(remainingMs) {
+    clearInterval(sprintTicker);
+    const endsAt = Date.now() + remainingMs;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      $('tv-status').textContent = `⏱ ${left} s left · most sums wins`;
+      if (left <= 0) clearInterval(sprintTicker);
+    };
+    tick();
+    sprintTicker = setInterval(tick, 250);
+  }
+
   function renderRoom() {
     const phase = room.phase;
-    track.render(room.players, { raceLength, hostId: room.hostId, lastWinnerId: room.lastWinnerId, phase });
+    const mode = room.mode || room.settings.mode;
+    SM.applyTheme(room.settings.theme);
+    track.render(room.players, { raceLength, hostId: room.hostId, lastWinnerId: room.lastWinnerId, phase, theme: room.settings.theme, mode, nitro: room.settings.nitro });
     $('tv-track').classList.toggle('hidden', phase === 'finished');
     $('tv-podium').classList.toggle('hidden', phase !== 'finished');
+    if (phase !== 'racing') clearInterval(sprintTicker);
     if (phase === 'lobby') {
       clearInterval(flagTimer);
       const n = room.players.length;
-      $('tv-status').textContent = n ? `${n} racer${n === 1 ? '' : 's'} on the grid. Waiting for the host to start…` : 'Waiting for racers…';
+      const what = mode === 'sprint' ? `Sprint: most sums in ${room.settings.sprintSec} s.` : `Race to ${raceLength} segments.`;
+      $('tv-status').textContent = n ? `${n} racer${n === 1 ? '' : 's'} on the grid. ${what} Waiting for the host…` : 'Waiting for racers…';
     } else if (phase === 'countdown') {
       $('tv-status').textContent = 'Get ready…';
     } else if (phase === 'racing') {
-      $('tv-status').textContent = '🏎️ Racing!';
+      if (mode === 'sprint' && room.sprintRemainingMs !== null) startSprintTicker(room.sprintRemainingMs);
+      else if (mode === 'sprint') startSprintTicker(room.settings.sprintSec * 1000);
+      else $('tv-status').textContent = '🏎️ Racing!';
     } else if (phase === 'finished') {
       clearInterval(flagTimer);
       $('tv-status').textContent = '🏁 Race over!';
-      if (room.ranking) renderPodium(room.ranking, { quiet: true });
+      if (room.ranking) renderPodium(room.ranking, { quiet: true, mode });
     }
   }
 
   let lastPodiumKey = null;
-  function renderPodium(ranking, { quiet } = {}) {
-    const key = ranking.map((r) => r.playerId).join(',') + ranking.map((r) => r.timeMs).join(',');
+  function renderPodium(ranking, { quiet, mode = 'race' } = {}) {
+    const key = ranking.map((r) => r.playerId).join(',') + ranking.map((r) => `${r.timeMs}:${r.correct}`).join(',');
+    const theme = room ? room.settings.theme : 'cars';
     $('tv-podium').classList.remove('hidden');
     $('tv-track').classList.add('hidden');
     const top = ranking.slice(0, 3);
@@ -108,13 +137,15 @@
       .map(
         (r) => `<div class="podium-step p${r.place}">
           <div class="medal">${medals[r.place]}</div>
-          <div class="car" style="background:${r.car.colour}">${r.car.emoji}</div>
+          <div class="car" style="background:${r.car.colour}">${SM.spriteFor(r.car, theme)}</div>
           <div class="pname">${SM.escapeHtml(r.name)}</div>
-          <div class="ptime">${r.finished ? SM.formatTime(r.timeMs) : `${r.progress}/${r.total} sums`}</div>
+          <div class="ptime">${mode === 'sprint' ? `${r.correct} correct` : r.finished ? SM.formatTime(r.timeMs) : `${r.progress}/${r.total} segments`}</div>
           <div class="block"></div>
         </div>`
       )
       .join('');
+    const fastest = ranking.filter((r) => r.fastestMs !== null && r.fastestMs !== undefined).sort((a, b) => a.fastestMs - b.fastestMs)[0];
+    if (fastest) $('tv-podium').insertAdjacentHTML('beforeend', `<div class="podium-fastest tv-fastest">⚡ Fastest answer: ${SM.escapeHtml(fastest.name)}, ${SM.formatFast(fastest.fastestMs)}</div>`);
     if (!quiet && key !== lastPodiumKey) SM.confetti($('tv-confetti'));
     lastPodiumKey = key;
   }

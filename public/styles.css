@@ -272,8 +272,17 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus { border-colo
 .podium-step.p3 .block { height: 32px; background: linear-gradient(180deg, #fdba74, #c2410c); }
 .results { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 .results th { text-align: left; color: var(--ink-2); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; padding: 6px 8px; }
+.results-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .results td { padding: 8px 6px; border-top: 1px solid var(--line); font-weight: 700; white-space: nowrap; }
-.results td:nth-child(2) { white-space: normal; }
+.results td:nth-child(2) { max-width: 10em; overflow: hidden; text-overflow: ellipsis; }
+.results th .short { display: none; }
+@media (max-width: 480px) {
+  .results { font-size: 0.85rem; }
+  .results th, .results td { padding: 8px 4px; }
+  .results .col-fast { display: none; }
+  .results th .long { display: none; }
+  .results th .short { display: inline; }
+}
 .results tr.you td { background: #fff7ed; }
 .podium-actions { display: grid; gap: 10px; margin-top: 16px; }
 
@@ -338,3 +347,50 @@ body.tv .podium-step .medal { font-size: 3.5rem; }
 @media (prefers-reduced-motion: reduce) {
   .car, .screen { transition: none; animation: none; }
 }
+
+/* ---------- milestone 4: themes, nitro, head starts, practice ---------- */
+.lane-name .hs { margin-left: 4px; font-size: 0.75em; background: #fde68a; color: #78350f; border-radius: 999px; padding: 1px 6px; }
+.car.flame { box-shadow: 0 0 10px 3px rgba(249,115,22,0.8); }
+.car.boost { animation: boost 0.7s ease; }
+@keyframes boost {
+  0% { filter: brightness(1); }
+  30% { filter: brightness(1.8) drop-shadow(0 0 10px #fb923c); }
+  100% { filter: brightness(1); }
+}
+.nitro-burst {
+  position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%);
+  font-size: clamp(2rem, 9vw, 4rem); font-weight: 900; color: #fb923c; text-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  pointer-events: none; z-index: 55; animation: burst 0.9s ease forwards;
+}
+@keyframes burst { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); } 25% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); } 100% { opacity: 0; transform: translate(-50%, -70%) scale(1); } }
+.inline-select { width: auto; padding: 6px 10px; font-size: 0.95rem; margin-left: 4px; }
+.handicaps { margin-top: 10px; display: grid; gap: 6px; }
+.handicaps h3 { margin: 0; font-size: 0.85rem; color: var(--ink-2); }
+.handicap-row { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 8px; font-weight: 700; font-size: 0.9rem; }
+.handicap-row .hbtn { width: 34px; height: 34px; border-radius: 10px; border: 2px solid var(--line); background: #f8fafc; font-weight: 900; cursor: pointer; }
+.handicap-row .hbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.handicap-row .hval { min-width: 2.5em; text-align: center; color: var(--primary-2); }
+.podium-fastest { font-weight: 800; color: var(--ink-2); margin: -8px 0 14px; }
+
+/* themes: the track is the only thing that changes */
+body[data-theme="rockets"] .track {
+  background-color: #0b1026;
+  background-image:
+    radial-gradient(1px 1px at 12% 30%, #fff 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 45% 70%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 70% 20%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 88% 60%, #fff 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 30% 85%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 60% 45%, #fff 50%, transparent 51%);
+}
+body[data-theme="rockets"] .track::after { background: none; width: auto; right: 6px; top: 50%; transform: translateY(-50%); bottom: auto; content: "🌕"; font-size: 1.6rem; }
+body[data-theme="rockets"] .lane { border-bottom-color: rgba(148,163,184,0.25); }
+body[data-theme="horses"] .track { background-color: #166534; background-image: repeating-linear-gradient(90deg, transparent 0 24px, rgba(255,255,255,0.06) 24px 48px); }
+body[data-theme="horses"] .track::after { background: none; width: auto; right: 6px; top: 50%; transform: translateY(-50%); bottom: auto; content: "🏆"; font-size: 1.6rem; }
+body[data-theme="horses"] .lane { border-bottom: 2px dashed rgba(255,255,255,0.45); }
+body[data-theme="boats"] .track { background-color: #0369a1; background-image: repeating-linear-gradient(90deg, transparent 0 20px, rgba(255,255,255,0.08) 20px 40px); }
+body[data-theme="boats"] .track::after { background: none; width: auto; right: 6px; top: 50%; transform: translateY(-50%); bottom: auto; content: "🏝️"; font-size: 1.6rem; }
+body[data-theme="boats"] .lane { border-bottom: 2px dotted rgba(224,242,254,0.6); }
+body.tv[data-theme="rockets"] .track::after, body.tv[data-theme="horses"] .track::after, body.tv[data-theme="boats"] .track::after { font-size: 3rem; right: 10px; }
+body.tv .podium { flex-wrap: wrap; }
+body.tv .tv-fastest { flex-basis: 100%; text-align: center; font-size: 1.3rem; margin: 12px 0 0; }

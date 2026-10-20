@@ -11,6 +11,26 @@
   const CARS = ['🚗', '🚕', '🚙', '🚌', '🚎', '🏎️', '🚓', '🚑', '🚒', '🚐', '🛻', '🚚', '🚜', '🏍️', '🛵', '🚲', '🛺', '🚀'];
   const COLOURS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899', '#f43f5e', '#14b8a6', '#a3e635', '#64748b'];
 
+  // Themes are a pure sprite + CSS swap. A player's pick is stored as a car
+  // emoji; each theme maps that pick (by index) to its own sprite.
+  const THEMES = {
+    cars: { name: 'Cars', emoji: '🚗', sprites: CARS },
+    rockets: { name: 'Rockets', emoji: '🚀', sprites: ['🚀', '🛸', '🛰️', '✈️', '🛩️', '🚁', '🎈', '🪂', '☄️', '🌠', '🛬', '🛫', '🚀', '🛸', '✈️', '🚁', '🛰️', '☄️'] },
+    horses: { name: 'Horses', emoji: '🐎', sprites: ['🐎', '🦄', '🐴', '🦓', '🦌', '🐐', '🐂', '🐃', '🐄', '🐪', '🦙', '🦒', '🐕', '🐈', '🐇', '🦘', '🐘', '🦏'] },
+    boats: { name: 'Boats', emoji: '⛵', sprites: ['⛵', '🚤', '🛶', '🛥️', '🚣', '🛳️', '⛴️', '🚢', '🐬', '🐳', '🦈', '🐙', '🦆', '🐢', '🏄', '🦭', '🐧', '🛟'] },
+  };
+  const NITRO_STREAK = 5;
+
+  function spriteFor(car, theme) {
+    const t = THEMES[theme] || THEMES.cars;
+    const i = CARS.indexOf(car.emoji);
+    return i >= 0 ? t.sprites[i] || car.emoji : car.emoji;
+  }
+
+  function applyTheme(theme) {
+    document.body.dataset.theme = THEMES[theme] ? theme : 'cars';
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -21,6 +41,12 @@
     if (s < 60) return `${s.toFixed(1)} s`;
     const m = Math.floor(s / 60);
     return `${m}:${(s - m * 60).toFixed(1).padStart(4, '0')}`;
+  }
+
+  // Reaction times: two decimals, since good answers come in under a second.
+  function formatFast(ms) {
+    if (ms === null || ms === undefined) return '—';
+    return `${(ms / 1000).toFixed(2)} s`;
   }
 
   let toastTimer = null;
@@ -99,8 +125,9 @@
   // Keeps one .lane per player keyed by id so position transitions stay smooth
   // across re-renders.
   function Track(container) {
-    const lanes = new Map(); // playerId → { lane, car }
+    const lanes = new Map(); // playerId → { lane, car, name, badge, state }
     let raceLength = 20;
+    let opts = { theme: 'cars', mode: 'race', nitro: true, phase: 'lobby' };
 
     function measure() {
       const road = container.querySelector('.lane-road');
@@ -116,14 +143,39 @@
         lane.className = 'lane';
         lane.dataset.id = p.id;
         lane.innerHTML = '<div class="lane-name"></div><div class="lane-road"><div class="car"><span class="badge"></span></div></div>';
-        entry = { lane, car: lane.querySelector('.car'), name: lane.querySelector('.lane-name'), badge: lane.querySelector('.badge') };
+        entry = {
+          lane,
+          car: lane.querySelector('.car'),
+          name: lane.querySelector('.lane-name'),
+          badge: lane.querySelector('.badge'),
+          state: { progress: 0, streak: 0, finished: false },
+        };
         lanes.set(p.id, entry);
       }
       return entry;
     }
 
-    function render(players, { raceLength: len, youId, hostId, lastWinnerId, phase } = {}) {
+    // Position, laps and flame for one car from its current state.
+    function paint(entry) {
+      const { progress, streak, finished } = entry.state;
+      const sprint = opts.mode === 'sprint';
+      const pos = sprint ? progress % raceLength : progress;
+      entry.car.style.setProperty('--p', Math.max(0, Math.min(1, pos / raceLength)));
+      const laps = sprint ? Math.floor(progress / raceLength) : 0;
+      const flame = opts.nitro && !sprint && streak >= NITRO_STREAK && !finished;
+      entry.badge.textContent = finished ? '🏁' : `${laps > 0 ? `🏁×${laps}` : ''}${flame ? '🔥' : ''}`;
+      entry.car.classList.toggle('finished', finished);
+      entry.car.classList.toggle('flame', flame);
+    }
+
+    function render(players, { raceLength: len, youId, hostId, lastWinnerId, phase, theme, mode, nitro } = {}) {
       if (len) raceLength = len;
+      opts = {
+        theme: theme || opts.theme,
+        mode: mode || opts.mode,
+        nitro: nitro === undefined ? opts.nitro : Boolean(nitro),
+        phase: phase || opts.phase,
+      };
       const seen = new Set();
       const empty = container.querySelector('.track-empty');
       if (empty) empty.remove();
@@ -134,17 +186,17 @@
         const bits = [];
         if (p.id === hostId) bits.push('<span title="Host">⭐</span>');
         if (p.id === lastWinnerId && phase === 'lobby') bits.push('<span title="Last winner">👑</span>');
-        entry.name.innerHTML = `${bits.join('')}<span class="lvl" title="${lvl.name}">${lvl.emoji}</span> ${escapeHtml(p.name)}`;
+        const head = p.handicap > 0 && opts.mode === 'race' && (phase === 'lobby' || phase === 'finished') ? `<span class="hs" title="Head start">+${p.handicap}</span>` : '';
+        entry.name.innerHTML = `${bits.join('')}<span class="lvl" title="${lvl.name}">${lvl.emoji}</span> ${escapeHtml(p.name)}${head}`;
         entry.lane.classList.toggle('you', p.id === youId);
         entry.lane.classList.toggle('disconnected', !p.connected);
         entry.lane.classList.toggle('spectator', Boolean(p.spectator) && (phase === 'countdown' || phase === 'racing'));
         entry.car.textContent = '';
-        entry.car.append(document.createTextNode(p.car.emoji));
+        entry.car.append(document.createTextNode(spriteFor(p.car, opts.theme)));
         entry.car.append(entry.badge);
         entry.car.style.background = p.car.colour;
-        entry.car.classList.toggle('finished', Boolean(p.finished));
-        entry.badge.textContent = p.finished ? '🏁' : '';
-        setProgress(entry.car, p.progress || 0);
+        entry.state = { progress: p.progress || 0, streak: p.streak || 0, finished: Boolean(p.finished) };
+        paint(entry);
         container.append(entry.lane);
       });
       for (const [id, entry] of lanes) {
@@ -162,24 +214,27 @@
       measure();
     }
 
-    function setProgress(car, progress) {
-      car.style.setProperty('--p', Math.max(0, Math.min(1, progress / raceLength)));
-    }
-
-    function update(playerId, { progress, total, skid, finished }) {
+    function update(playerId, { progress, total, skid, finished, streak, nitro }) {
       const entry = lanes.get(playerId);
       if (!entry) return;
       if (total) raceLength = total;
-      setProgress(entry.car, progress);
+      entry.state = {
+        progress: progress === undefined ? entry.state.progress : progress,
+        streak: streak === undefined ? entry.state.streak : streak,
+        finished: Boolean(finished) || entry.state.finished,
+      };
+      paint(entry);
       if (skid) {
         entry.car.classList.remove('skid');
         void entry.car.offsetWidth; // restart the animation
         entry.car.classList.add('skid');
         setTimeout(() => entry.car.classList.remove('skid'), 650);
       }
-      if (finished) {
-        entry.car.classList.add('finished');
-        entry.badge.textContent = '🏁';
+      if (nitro) {
+        entry.car.classList.remove('boost');
+        void entry.car.offsetWidth;
+        entry.car.classList.add('boost');
+        setTimeout(() => entry.car.classList.remove('boost'), 700);
       }
     }
 
@@ -262,6 +317,11 @@
       tone(ctx, { from: 660, dur: 0.1, gain: 0.15 });
       tone(ctx, { from: 990, start: 0.1, dur: 0.14, gain: 0.15 });
     },
+    nitro: (ctx) => {
+      noise(ctx, { dur: 0.5, gain: 0.25, freq: 2200, q: 0.5 });
+      tone(ctx, { type: 'sawtooth', from: 200, to: 1600, dur: 0.45, gain: 0.1 });
+      tone(ctx, { type: 'sine', from: 1320, start: 0.3, dur: 0.25, gain: 0.15 });
+    },
   };
 
   // ---- Confetti ------------------------------------------------------------
@@ -333,5 +393,5 @@
     };
   }
 
-  window.SM = { LEVELS, CARS, COLOURS, escapeHtml, formatTime, toast, connect, Track, Sounds, confetti, storage };
+  window.SM = { LEVELS, CARS, COLOURS, THEMES, NITRO_STREAK, spriteFor, applyTheme, escapeHtml, formatTime, formatFast, toast, connect, Track, Sounds, confetti, storage };
 })();

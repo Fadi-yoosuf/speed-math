@@ -8,6 +8,11 @@ const { cleanName } = require('./words');
 
 const RACE_LENGTHS = [10, 20, 30];
 const FLAG_TIMER_RANGE = [5, 120];
+const MODES = ['race', 'sprint'];
+const SPRINT_SECONDS = [30, 60, 90, 120];
+const THEMES = ['cars', 'rockets', 'horses', 'boats'];
+const MAX_HANDICAP = 5; // head-start segments
+const NITRO_STREAK = 5; // correct answers in a row for a boost
 const MAX_PLAYERS = 12;
 const MAX_ROOMS = 200;
 const STALL_MS = 1500;
@@ -22,6 +27,10 @@ const DEFAULT_SETTINGS = Object.freeze({
   lockLevel: null, // null = free choice per player, or 1..4
   autoSubmit: true,
   flagTimerSec: 20,
+  nitro: true,
+  mode: 'race', // 'race': first to N segments; 'sprint': most correct in sprintSec
+  sprintSec: 60,
+  theme: 'cars',
 });
 
 function fail(message) {
@@ -67,6 +76,20 @@ function validateSettings(input, base = DEFAULT_SETTINGS) {
       return fail(`flagTimerSec must be ${FLAG_TIMER_RANGE[0]}-${FLAG_TIMER_RANGE[1]}`);
     }
     out.flagTimerSec = s;
+  }
+  if ('nitro' in input) out.nitro = Boolean(input.nitro);
+  if ('mode' in input) {
+    if (!MODES.includes(input.mode)) return fail('mode must be race or sprint');
+    out.mode = input.mode;
+  }
+  if ('sprintSec' in input) {
+    const s = Number(input.sprintSec);
+    if (!SPRINT_SECONDS.includes(s)) return fail(`sprintSec must be one of ${SPRINT_SECONDS.join(', ')}`);
+    out.sprintSec = s;
+  }
+  if ('theme' in input) {
+    if (!THEMES.includes(input.theme)) return fail('unknown theme');
+    out.theme = input.theme;
   }
   return { ok: true, settings: out };
 }
@@ -148,6 +171,12 @@ function parseMessage(raw) {
       if (!level.ok) return level;
       return { ok: true, type: msg.type, payload: { level: level.level } };
     }
+    case 'set_handicap': {
+      if (typeof p.playerId !== 'string' || p.playerId.length === 0 || p.playerId.length > 32) return fail('bad player');
+      const segments = Number(p.segments);
+      if (!Number.isInteger(segments) || segments < 0 || segments > MAX_HANDICAP) return fail(`head start must be 0-${MAX_HANDICAP}`);
+      return { ok: true, type: msg.type, payload: { playerId: p.playerId, segments } };
+    }
     case 'answer': {
       const index = Number(p.questionIndex);
       if (!Number.isInteger(index) || index < 0) return fail('bad question index');
@@ -181,4 +210,9 @@ module.exports = {
   COUNTDOWN_SECONDS,
   CAR_EMOJIS,
   CAR_COLOURS,
+  MODES,
+  SPRINT_SECONDS,
+  THEMES,
+  MAX_HANDICAP,
+  NITRO_STREAK,
 };

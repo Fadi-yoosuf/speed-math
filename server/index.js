@@ -35,6 +35,8 @@ function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.get('/healthz', (req, res) => res.type('text').send('ok'));
+  // The generator doubles as a browser module for the solo practice mode.
+  app.get('/questions.js', (req, res) => res.sendFile(path.join(__dirname, 'questions.js')));
   app.get('/join/:code', (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'index.html')));
   app.get(['/tv', '/tv/:code'], (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'tv.html')));
   app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
@@ -266,6 +268,9 @@ function startServer({ port = 3000, host = '0.0.0.0', log = console.log, registr
         break;
       case 'set_level':
         result = room.setLevel(conn.playerId, payload.level);
+        break;
+      case 'set_handicap':
+        result = room.setHandicap(conn.playerId, payload.playerId, payload.segments);
         break;
       case 'start_race':
         result = room.start(conn.playerId);

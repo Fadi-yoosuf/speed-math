@@ -14,8 +14,8 @@ const LEVELS = {
   4: { name: 'Turbo', emoji: '🚀' },
 };
 
-const OPS = ['add', 'sub', 'mul'];
-const OP_SYMBOL = { add: '+', sub: '−', mul: '×' };
+const OPS = ['add', 'sub', 'mul', 'div'];
+const OP_SYMBOL = { add: '+', sub: '−', mul: '×', div: '÷' };
 
 // mulberry32: tiny, fast, good-enough PRNG with a 32-bit state.
 function mulberry32(seed) {
@@ -110,12 +110,36 @@ function mulFor(rng, level) {
   return rng.bool() ? [a, b] : [b, a];
 }
 
-const BUILDERS = { add: addFor, sub: subFor, mul: mulFor };
+// Division: built from the level's multiplication tables, so it always divides
+// exactly. dividend ÷ divisor = quotient.
+function divFor(rng, level) {
+  let divisor;
+  let quotient;
+  if (level === 1) {
+    divisor = rng.pick([1, 2, 10]);
+    quotient = rng.int(0, 5);
+  } else if (level === 2) {
+    divisor = rng.pick([2, 3, 5, 10]);
+    quotient = rng.int(1, 10);
+  } else if (level === 3) {
+    divisor = rng.int(2, 10);
+    quotient = rng.int(1, 10);
+  } else if (rng.bool()) {
+    divisor = rng.int(2, 12);
+    quotient = rng.int(2, 12);
+  } else {
+    divisor = rng.int(2, 9);
+    quotient = rng.int(10, 99);
+  }
+  return [divisor * quotient, divisor];
+}
+
+const BUILDERS = { add: addFor, sub: subFor, mul: mulFor, div: divFor };
 
 // Rookies may see "+ 0" (it is part of learning); from Driver up a zero
 // operand is a free answer, and 0 + 0 is never asked.
 function isTrivial(op, a, b, level) {
-  if (op === 'mul') return false; // ×0 and ×1 are legitimate at Rookie level
+  if (op === 'mul' || op === 'div') return false; // ×0, ×1 and ÷1 are legitimate at Rookie level
   if (a === 0 && b === 0) return true;
   return level >= 2 && (a === 0 || b === 0);
 }
@@ -123,6 +147,7 @@ function isTrivial(op, a, b, level) {
 function compute(op, a, b) {
   if (op === 'add') return a + b;
   if (op === 'sub') return a - b;
+  if (op === 'div') return a / b;
   return a * b;
 }
 
@@ -155,4 +180,7 @@ function generate(seed, level, ops, count) {
   return out;
 }
 
-module.exports = { generate, LEVELS, OPS, OP_SYMBOL, makeRng, toSeedInt };
+const api = { generate, LEVELS, OPS, OP_SYMBOL, makeRng, toSeedInt };
+// Served to the browser as /questions.js for the solo practice mode.
+if (typeof module !== 'undefined' && module.exports) module.exports = api;
+else if (typeof window !== 'undefined') window.SMQuestions = api;

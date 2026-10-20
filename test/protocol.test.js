@@ -59,14 +59,40 @@ test('validateSettings merges partial changes over the current settings', () => 
   const base = { ...DEFAULT_SETTINGS, length: 30 };
   const r = validateSettings({ ops: ['sub', 'add', 'add'], lockLevel: '3', autoSubmit: 0, flagTimerSec: 45 }, base);
   assert.equal(r.ok, true);
-  assert.deepEqual(r.settings, { ops: ['add', 'sub'], length: 30, lockLevel: 3, autoSubmit: false, flagTimerSec: 45 });
+  assert.deepEqual(r.settings, { ...DEFAULT_SETTINGS, ops: ['add', 'sub'], length: 30, lockLevel: 3, autoSubmit: false, flagTimerSec: 45 });
   assert.equal(validateSettings({ length: 15 }).ok, false);
   assert.equal(validateSettings({ ops: [] }).ok, false);
-  assert.equal(validateSettings({ ops: ['div'] }).ok, false);
+  assert.equal(validateSettings({ ops: ['mod'] }).ok, false);
   assert.equal(validateSettings({ lockLevel: 7 }).ok, false);
   assert.equal(validateSettings({ flagTimerSec: 2 }).ok, false);
   assert.equal(validateSettings({ flagTimerSec: 1000 }).ok, false);
   assert.equal(validateSettings('x').ok, false);
   assert.deepEqual(validateSettings(undefined).settings, DEFAULT_SETTINGS);
   assert.equal(validateSettings({ lockLevel: '' }).settings.lockLevel, null);
+});
+
+test('milestone 4 settings: nitro, mode, sprintSec, theme, division', () => {
+  assert.equal(DEFAULT_SETTINGS.nitro, true);
+  assert.equal(DEFAULT_SETTINGS.mode, 'race');
+  assert.equal(DEFAULT_SETTINGS.sprintSec, 60);
+  assert.equal(DEFAULT_SETTINGS.theme, 'cars');
+  assert.deepEqual(DEFAULT_SETTINGS.ops, ['add', 'sub', 'mul'], 'division is opt-in');
+  const r = validateSettings({ nitro: 0, mode: 'sprint', sprintSec: '90', theme: 'boats', ops: ['div', 'add'] });
+  assert.equal(r.ok, true);
+  assert.equal(r.settings.nitro, false);
+  assert.equal(r.settings.mode, 'sprint');
+  assert.equal(r.settings.sprintSec, 90);
+  assert.equal(r.settings.theme, 'boats');
+  assert.deepEqual(r.settings.ops, ['add', 'div']);
+  assert.equal(validateSettings({ mode: 'marathon' }).ok, false);
+  assert.equal(validateSettings({ sprintSec: 45 }).ok, false);
+  assert.equal(validateSettings({ theme: 'dragons' }).ok, false);
+});
+
+test('set_handicap takes a player id and 0-5 segments', () => {
+  const r = parseMessage(raw('set_handicap', { playerId: 'abc123', segments: '3' }));
+  assert.deepEqual(r.payload, { playerId: 'abc123', segments: 3 });
+  assert.equal(parseMessage(raw('set_handicap', { playerId: 'abc123', segments: 6 })).ok, false);
+  assert.equal(parseMessage(raw('set_handicap', { playerId: 'abc123', segments: -1 })).ok, false);
+  assert.equal(parseMessage(raw('set_handicap', { playerId: '', segments: 1 })).ok, false);
 });

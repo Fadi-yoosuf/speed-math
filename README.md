@@ -5,10 +5,12 @@ Friends join a room with a four-letter code, the host presses **Start**, and
 everyone races live. No accounts, no saved history.
 
 See [PLAN.md](PLAN.md) for the game design, architecture, hosting options
-and build roadmap. Milestones 0–3 of that roadmap are implemented: a full
+and build roadmap. All four milestones of that roadmap are implemented: a full
 playable race, mobile numpad, auto-submit, skid penalty, sounds, confetti,
 QR join codes, TV mode, reconnect on refresh, host hand-over, room expiry,
-and the hosting options below (Wi-Fi, Cloudflare Quick Tunnel, Render, Docker).
+the hosting options below (Wi-Fi, Cloudflare Quick Tunnel, Render, Docker),
+and the extras: nitro streaks, sprint mode, division, themes, head starts,
+a fastest-answer stat and a solo practice mode.
 
 ## Hosting
 
@@ -161,6 +163,26 @@ rate-limits you, build from a mirror:
   own car. If the host drops, the badge passes to the longest-connected
   player. Empty rooms vanish after 30 minutes.
 - Answers are checked on the server; the page never receives them.
+
+### Extras (host settings)
+
+- **🔥 Nitro streaks** (on by default): every 5 correct in a row lights a
+  flame on your car and jumps it one extra segment. Switch it off for a
+  pure-skill race.
+- **⏱ Sprint mode:** instead of first to the flag, most correct answers in
+  30, 60, 90 or 120 seconds. Cars lap the track and the podium ranks by
+  correct answers (ties go to fewer mistakes). Good for mixed ages.
+- **÷ Division** as a fourth kind of sum, opt-in. Always exact, built from
+  the multiplication tables of the player's level (`40 ÷ 10`, `36 ÷ 3`).
+- **Themes:** cars, rockets, horses or boats. A pure sprite and track swap;
+  each player's pick maps to the matching sprite in the new theme.
+- **Head starts:** the host can put any car up to 5 segments ahead for the
+  next race (race mode only). Shown as `+2` next to the name.
+- **⚡ Fastest answer:** the podium shows everyone's quickest correct answer
+  and who had the fastest of the race.
+- **🎯 Practice alone:** from the home screen, a 20-sum solo run at your
+  level with no room and no code. It runs entirely in the browser, so it
+  works even before anyone else has joined.
 
 ## Development
 

@@ -8,6 +8,12 @@
 //   'changed'   ()                   → room_state should be (re)sent to everyone
 //
 // Timers and the clock are injectable (`deps`) so tests can drive them.
+//
+// Two modes:
+//   race   – first car to `length` segments wins. A correct answer moves one
+//            segment; every NITRO_STREAK correct in a row adds a bonus segment
+//            (if nitro is on). Head starts put a car some segments ahead.
+//   sprint – most correct answers in `sprintSec` seconds. Cars lap the track.
 
 const { EventEmitter } = require('node:events');
 const crypto = require('node:crypto');
@@ -16,6 +22,8 @@ const {
   validateSettings,
   DEFAULT_SETTINGS,
   MAX_PLAYERS,
+  MAX_HANDICAP,
+  NITRO_STREAK,
   STALL_MS,
   COUNTDOWN_SECONDS,
 } = require('./protocol');
@@ -24,6 +32,11 @@ const PHASES = ['lobby', 'countdown', 'racing', 'finished'];
 const HOST_GRACE_MS = 5000; // how long a dropped host keeps the badge
 const DISCONNECT_TTL_MS = 2 * 60 * 1000; // dropped players are pruned after this
 const EMPTY_ROOM_TTL_MS = 30 * 60 * 1000; // room deleted after this with nobody connected
+
+// Sprint races need more questions than anyone can answer in the time.
+function sprintQuestionCount(seconds) {
+  return Math.min(300, seconds * 2 + 20);
+}
 
 const defaultDeps = {
   now: () => Date.now(),
@@ -56,8 +69,9 @@ class Room extends EventEmitter {
     this.seed = null;
     this.questions = new Map(); // level → [{ text, answer }]
     this.raceStartedAt = null;
+    this.sprintEndsAt = null;
     this.ranking = null;
-    this.timers = { countdown: null, flag: null, hostGrace: null };
+    this.timers = { countdown: null, flag: null, sprint: null, hostGrace: null };
     this.endReason = null;
   }
 
@@ -71,6 +85,10 @@ class Room extends EventEmitter {
     let n = 0;
     for (const p of this.players.values()) if (p.connected) n += 1;
     return n;
+  }
+
+  get mode() {
+    return this.settings.mode;
   }
 
   isHost(playerId) {
@@ -101,6 +119,7 @@ class Room extends EventEmitter {
       disconnectedAt: null,
       pruneTimer: null,
       spectator: this.phase === 'countdown' || this.phase === 'racing',
+      handicap: 0,
       ...freshRaceStats(),
     };
     this.players.set(player.id, player);
@@ -198,9 +217,13 @@ class Room extends EventEmitter {
 
   // ---- lobby actions -----------------------------------------------------------
 
+  get inRace() {
+    return this.phase === 'countdown' || this.phase === 'racing';
+  }
+
   updateSettings(playerId, partial) {
     if (!this.isHost(playerId)) return fail('only the host can change settings');
-    if (this.phase === 'countdown' || this.phase === 'racing') return fail('wait for the race to end');
+    if (this.inRace) return fail('wait for the race to end');
     const v = validateSettings(partial, this.settings);
     if (!v.ok) return v;
     this.settings = v.settings;
@@ -214,9 +237,21 @@ class Room extends EventEmitter {
   setLevel(playerId, level) {
     const player = this.players.get(playerId);
     if (!player) return fail('not in this room');
-    if (this.phase === 'countdown' || this.phase === 'racing') return fail('wait for the race to end');
+    if (this.inRace) return fail('wait for the race to end');
     if (this.settings.lockLevel && level !== this.settings.lockLevel) return fail('the host locked the level');
     player.level = level;
+    this.emit('changed');
+    return ok();
+  }
+
+  // Head start: the host can put a car a few segments ahead for the next race.
+  setHandicap(hostId, playerId, segments) {
+    if (!this.isHost(hostId)) return fail('only the host can give head starts');
+    if (this.inRace) return fail('wait for the race to end');
+    const player = this.players.get(playerId);
+    if (!player) return fail('no such player');
+    if (!Number.isInteger(segments) || segments < 0 || segments > MAX_HANDICAP) return fail(`head start must be 0-${MAX_HANDICAP}`);
+    player.handicap = segments;
     this.emit('changed');
     return ok();
   }
@@ -225,7 +260,7 @@ class Room extends EventEmitter {
 
   start(playerId) {
     if (!this.isHost(playerId)) return fail('only the host can start');
-    if (this.phase === 'countdown' || this.phase === 'racing') return fail('race already running');
+    if (this.inRace) return fail('race already running');
     this.beginCountdown();
     return ok();
   }
@@ -236,11 +271,13 @@ class Room extends EventEmitter {
     this.endReason = null;
     this.ranking = null;
     this.raceStartedAt = null;
+    this.sprintEndsAt = null;
     this.seed = this.deps.randomSeed();
     this.questions = new Map();
     for (const p of this.players.values()) {
       Object.assign(p, freshRaceStats());
       p.spectator = false;
+      if (this.mode === 'race') p.progress = Math.min(p.handicap, this.settings.length - 1);
       this.questionsFor(p.level);
     }
     this.emit('changed');
@@ -262,26 +299,39 @@ class Room extends EventEmitter {
   beginRacing() {
     this.phase = 'racing';
     this.raceStartedAt = this.deps.now();
+    if (this.mode === 'sprint') {
+      const ms = this.settings.sprintSec * 1000;
+      this.sprintEndsAt = this.raceStartedAt + ms;
+      this.timers.sprint = this.deps.setTimeout(() => {
+        this.timers.sprint = null;
+        this.finish('time');
+      }, ms);
+    }
     this.emit('changed');
     for (const p of this.players.values()) {
       if (!p.spectator) this.sendQuestion(p);
     }
   }
 
+  questionCount() {
+    return this.mode === 'sprint' ? sprintQuestionCount(this.settings.sprintSec) : this.settings.length;
+  }
+
   questionsFor(level) {
     if (!this.questions.has(level)) {
-      this.questions.set(level, generate(this.seed, level, this.settings.ops, this.settings.length));
+      this.questions.set(level, generate(this.seed, level, this.settings.ops, this.questionCount()));
     }
     return this.questions.get(level);
   }
 
   sendQuestion(player) {
     const list = this.questionsFor(player.level);
-    const q = list[player.progress];
+    const q = list[player.qIndex];
     if (!q) return;
+    player.questionSentAt = this.deps.now();
     this.emit('send', player.id, {
       type: 'question',
-      index: player.progress,
+      index: player.qIndex,
       text: q.text,
       answerLength: String(q.answer).length,
       total: list.length,
@@ -294,18 +344,27 @@ class Room extends EventEmitter {
     if (this.phase !== 'racing') return fail('no race running');
     if (player.spectator) return fail('you joined mid-race; wait for the next one');
     if (player.finishedAt !== null) return fail('you already finished');
-    if (questionIndex !== player.progress) return fail('stale question');
+    if (questionIndex !== player.qIndex) return fail('stale question');
     const now = this.deps.now();
     if (player.lockedUntil && now < player.lockedUntil) return fail('skidding');
 
     const q = this.questionsFor(player.level)[questionIndex];
     const correct = value === q.answer;
     let stallMs = 0;
+    let nitro = false;
     if (correct) {
-      player.progress += 1;
+      player.qIndex += 1;
       player.correct += 1;
+      player.progress += 1;
       player.streak += 1;
       if (player.streak > player.bestStreak) player.bestStreak = player.streak;
+      const dt = now - player.questionSentAt;
+      if (player.fastestMs === null || dt < player.fastestMs) player.fastestMs = dt;
+      if (this.settings.nitro && this.mode === 'race' && player.streak % NITRO_STREAK === 0) {
+        player.progress += 1;
+        player.nitros += 1;
+        nitro = true;
+      }
       player.lockedUntil = 0;
     } else {
       player.wrong += 1;
@@ -314,17 +373,22 @@ class Room extends EventEmitter {
       player.lockedUntil = now + stallMs;
     }
     const total = this.settings.length;
-    const finished = player.progress >= total;
-    if (finished) player.finishedAt = now - this.raceStartedAt;
+    const finished = this.mode === 'race' && player.progress >= total;
+    if (finished) {
+      player.progress = total;
+      player.finishedAt = now - this.raceStartedAt;
+    }
 
-    this.emit('send', playerId, { type: 'answer_result', index: questionIndex, correct, stallMs, streak: player.streak });
+    this.emit('send', playerId, { type: 'answer_result', index: questionIndex, correct, stallMs, streak: player.streak, nitro });
     this.emit('broadcast', {
       type: 'progress',
       playerId,
       progress: player.progress,
       total,
       streak: player.streak,
+      correct: player.correct,
       skid: !correct,
+      nitro,
       finished,
       timeMs: finished ? player.finishedAt : null,
     });
@@ -334,7 +398,7 @@ class Room extends EventEmitter {
     } else if (correct) {
       this.sendQuestion(player);
     }
-    return ok({ correct, stallMs });
+    return ok({ correct, stallMs, nitro });
   }
 
   onPlayerFinished(player) {
@@ -352,40 +416,52 @@ class Room extends EventEmitter {
   }
 
   checkAllFinished() {
-    if (this.phase !== 'racing') return;
+    if (this.phase !== 'racing' || this.mode !== 'race') return;
     const racers = [...this.players.values()].filter((p) => !p.spectator);
     if (racers.length > 0 && racers.every((p) => p.finishedAt !== null)) this.finish('all');
   }
 
   endRace(playerId) {
     if (!this.isHost(playerId)) return fail('only the host can end the race');
-    if (this.phase !== 'racing' && this.phase !== 'countdown') return fail('no race running');
+    if (!this.inRace) return fail('no race running');
     this.finish('host');
     return ok();
   }
 
   finish(reason) {
-    if (this.phase !== 'racing' && this.phase !== 'countdown') return;
+    if (!this.inRace) return;
     this.clearRaceTimers();
     this.phase = 'finished';
     this.endReason = reason;
     this.ranking = this.computeRanking();
-    if (this.ranking.length > 0 && this.ranking[0].finished) this.lastWinnerId = this.ranking[0].playerId;
-    this.emit('broadcast', { type: 'race_finished', reason, ranking: this.ranking });
+    const top = this.ranking[0];
+    if (top && (top.finished || (this.mode === 'sprint' && top.correct > 0))) this.lastWinnerId = top.playerId;
+    this.emit('broadcast', { type: 'race_finished', reason, mode: this.mode, ranking: this.ranking });
     this.emit('changed');
   }
 
   computeRanking() {
     const racers = [...this.players.values()].filter((p) => !p.spectator);
-    racers.sort((a, b) => {
-      const af = a.finishedAt !== null;
-      const bf = b.finishedAt !== null;
-      if (af && bf) return a.finishedAt - b.finishedAt;
-      if (af !== bf) return af ? -1 : 1;
-      if (b.progress !== a.progress) return b.progress - a.progress;
-      if (b.correct !== a.correct) return b.correct - a.correct;
-      return a.joinedAt - b.joinedAt;
-    });
+    const byFastest = (a, b) => {
+      if (a.fastestMs === b.fastestMs) return 0;
+      if (a.fastestMs === null) return 1;
+      if (b.fastestMs === null) return -1;
+      return a.fastestMs - b.fastestMs;
+    };
+    if (this.mode === 'sprint') {
+      racers.sort((a, b) => b.correct - a.correct || a.wrong - b.wrong || byFastest(a, b) || a.joinedAt - b.joinedAt);
+    } else {
+      racers.sort((a, b) => {
+        const af = a.finishedAt !== null;
+        const bf = b.finishedAt !== null;
+        if (af && bf) return a.finishedAt - b.finishedAt;
+        if (af !== bf) return af ? -1 : 1;
+        if (b.progress !== a.progress) return b.progress - a.progress;
+        if (b.correct !== a.correct) return b.correct - a.correct;
+        return a.joinedAt - b.joinedAt;
+      });
+    }
+    const total = this.settings.length;
     return racers.map((p, i) => ({
       place: i + 1,
       playerId: p.id,
@@ -395,11 +471,15 @@ class Room extends EventEmitter {
       finished: p.finishedAt !== null,
       timeMs: p.finishedAt,
       progress: p.progress,
-      total: this.settings.length,
+      total,
+      laps: this.mode === 'sprint' ? Math.floor(p.correct / total) : 0,
       correct: p.correct,
       wrong: p.wrong,
       accuracy: p.correct + p.wrong > 0 ? p.correct / (p.correct + p.wrong) : null,
       bestStreak: p.bestStreak,
+      fastestMs: p.fastestMs,
+      nitros: p.nitros,
+      handicap: this.mode === 'race' ? p.handicap : 0,
     }));
   }
 
@@ -416,6 +496,7 @@ class Room extends EventEmitter {
     this.phase = 'lobby';
     this.ranking = null;
     this.raceStartedAt = null;
+    this.sprintEndsAt = null;
     for (const p of this.players.values()) {
       Object.assign(p, freshRaceStats());
       p.spectator = false;
@@ -425,7 +506,7 @@ class Room extends EventEmitter {
   }
 
   clearRaceTimers() {
-    for (const key of ['countdown', 'flag']) {
+    for (const key of ['countdown', 'flag', 'sprint']) {
       if (this.timers[key]) {
         this.deps.clearTimeout(this.timers[key]);
         this.timers[key] = null;
@@ -445,14 +526,17 @@ class Room extends EventEmitter {
 
   toState() {
     const now = this.deps.now();
+    const racing = this.phase === 'racing';
     return {
       code: this.code,
       phase: this.phase,
       settings: this.settings,
+      mode: this.mode,
       hostId: this.hostId,
       lastWinnerId: this.lastWinnerId,
       raceLength: this.settings.length,
-      raceElapsedMs: this.phase === 'racing' && this.raceStartedAt !== null ? now - this.raceStartedAt : null,
+      raceElapsedMs: racing && this.raceStartedAt !== null ? now - this.raceStartedAt : null,
+      sprintRemainingMs: racing && this.sprintEndsAt !== null ? Math.max(0, this.sprintEndsAt - now) : null,
       endReason: this.endReason,
       ranking: this.phase === 'finished' ? this.ranking : null,
       players: [...this.players.values()].map((p) => ({
@@ -461,12 +545,14 @@ class Room extends EventEmitter {
         car: p.car,
         level: p.level,
         progress: p.progress,
+        correct: p.correct,
         streak: p.streak,
         finished: p.finishedAt !== null,
         timeMs: p.finishedAt,
         isHost: p.id === this.hostId,
         connected: p.connected,
         spectator: p.spectator,
+        handicap: p.handicap,
       })),
     };
   }
@@ -474,14 +560,18 @@ class Room extends EventEmitter {
 
 function freshRaceStats() {
   return {
-    progress: 0,
+    progress: 0, // segments along the track
+    qIndex: 0, // next question to answer
     correct: 0,
     wrong: 0,
     streak: 0,
     bestStreak: 0,
+    nitros: 0,
+    fastestMs: null,
+    questionSentAt: 0,
     finishedAt: null,
     lockedUntil: 0,
   };
 }
 
-module.exports = { Room, PHASES, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS };
+module.exports = { Room, PHASES, HOST_GRACE_MS, DISCONNECT_TTL_MS, EMPTY_ROOM_TTL_MS, sprintQuestionCount };

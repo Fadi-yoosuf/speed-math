@@ -81,7 +81,7 @@ test('three clients race to the finish and the podium shows the right order', as
   try {
     await Promise.all([ava.open(), ben.open(), cal.open()]);
 
-    ava.send('create_room', { name: 'Ava', car: car('🚗', '#ef4444'), level: 1, settings: { length: 10, flagTimerSec: 10 } });
+    ava.send('create_room', { name: 'Ava', car: car('🚗', '#ef4444'), level: 1, settings: { length: 10, flagTimerSec: 10, nitro: false } });
     const welcome = await ava.next((m) => m.type === 'welcome');
     assert.match(welcome.code, /^[A-Z]{4}$/);
     assert.match(welcome.joinUrl, new RegExp(`/join/${welcome.code}$`));

@@ -44,6 +44,7 @@
 
         <div class="home-actions">
           <button id="new-race-btn" class="btn btn-primary btn-big" type="button">🏁 New race</button>
+          <button id="practice-btn" class="btn btn-secondary btn-big" type="button">🎯 Practice alone</button>
           <div class="join-row">
             <input id="code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" aria-label="Room code">
             <button id="join-btn" class="btn btn-secondary" type="button">Join</button>
@@ -65,6 +66,7 @@
         <div class="card">
           <h2>Start grid <span id="player-count" class="muted"></span></h2>
           <div id="lobby-track" class="track track-lobby"></div>
+          <div id="handicaps" class="handicaps hidden"></div>
           <div class="lobby-level">
             <span>Your level:</span>
             <div id="lobby-level-picker" class="level-picker level-picker-compact"></div>
@@ -75,16 +77,42 @@
           <h2>Race settings <span id="settings-owner" class="muted"></span></h2>
           <div class="settings">
             <fieldset class="setting">
+              <legend>Mode</legend>
+              <label><input type="radio" name="mode" value="race"> 🏁 Race to the flag</label>
+              <label><input type="radio" name="mode" value="sprint"> ⏱ Sprint:
+                <select name="sprintSec" class="inline-select">
+                  <option value="30">30 s</option>
+                  <option value="60">60 s</option>
+                  <option value="90">90 s</option>
+                  <option value="120">120 s</option>
+                </select>
+              </label>
+            </fieldset>
+            <fieldset class="setting">
               <legend>Sums</legend>
               <label><input type="checkbox" name="op" value="add"> +</label>
               <label><input type="checkbox" name="op" value="sub"> −</label>
               <label><input type="checkbox" name="op" value="mul"> ×</label>
+              <label><input type="checkbox" name="op" value="div"> ÷</label>
             </fieldset>
             <fieldset class="setting">
-              <legend>Race length</legend>
+              <legend id="length-legend">Race length</legend>
               <label><input type="radio" name="length" value="10"> 10</label>
               <label><input type="radio" name="length" value="20"> 20</label>
               <label><input type="radio" name="length" value="30"> 30</label>
+            </fieldset>
+            <fieldset class="setting">
+              <legend>Extras</legend>
+              <label><input type="checkbox" name="nitro"> 🔥 Nitro: 5 in a row jumps a segment</label>
+            </fieldset>
+            <fieldset class="setting">
+              <legend>Theme</legend>
+              <select name="theme">
+                <option value="cars">🚗 Cars</option>
+                <option value="rockets">🚀 Rockets</option>
+                <option value="horses">🐎 Horses</option>
+                <option value="boats">⛵ Boats</option>
+              </select>
             </fieldset>
             <fieldset class="setting">
               <legend>Levels</legend>
@@ -150,10 +178,12 @@
         <div id="spectator-note" class="spectator-note hidden">👀 You joined mid-race. You're in the next one!</div>
         <div id="finished-note" class="finished-note hidden"></div>
         <button id="end-race-btn" class="btn btn-ghost btn-small hidden" type="button">End race for everyone</button>
+        <button id="quit-practice-btn" class="btn btn-ghost btn-small hidden" type="button">Stop practising</button>
       </div>
 
       <div id="countdown" class="countdown hidden"><span id="countdown-num">3</span></div>
       <div id="skid-flash" class="skid-flash"></div>
+      <div id="nitro-burst" class="nitro-burst hidden">🔥 NITRO!</div>
     </section>
 
     <!-- PODIUM ------------------------------------------------------------ -->
@@ -162,13 +192,18 @@
       <div class="card podium-card">
         <h1 class="title" id="podium-title">🏁 Race over!</h1>
         <div id="podium" class="podium"></div>
-        <table class="results">
-          <thead><tr><th>#</th><th>Racer</th><th>Time</th><th>Accuracy</th><th>Streak</th></tr></thead>
-          <tbody id="results-body"></tbody>
-        </table>
+        <p id="podium-fastest" class="podium-fastest hidden"></p>
+        <div class="results-wrap">
+          <table class="results">
+            <thead><tr><th>#</th><th>Racer</th><th id="results-score-head">Time</th><th><span class="long">Accuracy</span><span class="short">Acc.</span></th><th>Streak</th><th class="col-fast">Fastest</th></tr></thead>
+            <tbody id="results-body"></tbody>
+          </table>
+        </div>
         <div class="podium-actions">
           <button id="race-again-btn" class="btn btn-primary btn-big" type="button">🔁 Race again</button>
           <button id="garage-btn" class="btn btn-secondary" type="button">🔧 Back to garage</button>
+          <button id="practice-again-btn" class="btn btn-primary btn-big hidden" type="button">🔁 Practise again</button>
+          <button id="practice-home-btn" class="btn btn-secondary hidden" type="button">🏠 Home</button>
           <p id="podium-waiting" class="muted hidden">Waiting for the host…</p>
         </div>
       </div>
@@ -178,6 +213,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
+  <script src="/questions.js"></script>
   <script src="/shared.js"></script>
   <script src="/app.js"></script>
 </body>

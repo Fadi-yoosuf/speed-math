@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { generate, LEVELS, OPS } = require('../server/questions');
 
-const ALL = ['add', 'sub', 'mul'];
+const ALL = ['add', 'sub', 'mul', 'div'];
 
 function digits(n) {
   return String(Math.abs(n)).length;
@@ -32,9 +32,9 @@ test('different levels give different sequences for the same seed', () => {
 test('answers match the question text', () => {
   for (const level of [1, 2, 3, 4]) {
     for (const q of generate('check', level, ALL, 200)) {
-      const expected = q.op === 'add' ? q.a + q.b : q.op === 'sub' ? q.a - q.b : q.a * q.b;
+      const expected = q.op === 'add' ? q.a + q.b : q.op === 'sub' ? q.a - q.b : q.op === 'div' ? q.a / q.b : q.a * q.b;
       assert.equal(q.answer, expected, q.text);
-      assert.equal(q.text, `${q.a} ${q.op === 'add' ? '+' : q.op === 'sub' ? '−' : '×'} ${q.b}`);
+      assert.equal(q.text, `${q.a} ${{ add: '+', sub: '−', mul: '×', div: '÷' }[q.op]} ${q.b}`);
     }
   }
 });
@@ -127,11 +127,26 @@ test('operands are shuffled: both 3 × 7 and 7 × 3 shapes appear', () => {
   assert.ok(tableFirst.length > 50 && tableSecond.length > 50);
 });
 
+test('division always divides exactly, never by zero, from the level tables', () => {
+  for (const level of [1, 2, 3, 4]) {
+    for (const q of generate(`div-${level}`, level, ['div'], 300)) {
+      assert.equal(q.op, 'div');
+      assert.notEqual(q.b, 0, q.text);
+      assert.equal(q.a % q.b, 0, q.text);
+      assert.ok(Number.isInteger(q.answer) && q.answer >= 0, q.text);
+      if (level === 1) assert.ok([1, 2, 10].includes(q.b) && q.answer <= 5, q.text);
+      if (level === 2) assert.ok([2, 3, 5, 10].includes(q.b) && q.answer >= 1 && q.answer <= 10, q.text);
+      if (level === 3) assert.ok(q.b >= 2 && q.b <= 10 && q.answer >= 1 && q.answer <= 10, q.text);
+      if (level === 4) assert.ok((q.b >= 2 && q.b <= 12 && q.answer >= 2 && q.answer <= 12) || (q.b >= 2 && q.b <= 9 && q.answer >= 10 && q.answer <= 99), q.text);
+    }
+  }
+});
+
 test('rejects bad input', () => {
   assert.throws(() => generate(1, 5, ALL, 10), RangeError);
   assert.throws(() => generate(1, 1, [], 10), RangeError);
-  assert.throws(() => generate(1, 1, ['div'], 10), RangeError);
+  assert.throws(() => generate(1, 1, ['mod'], 10), RangeError);
   assert.throws(() => generate(1, 1, ALL, 0), RangeError);
   assert.equal(Object.keys(LEVELS).length, 4);
-  assert.deepEqual(OPS, ['add', 'sub', 'mul']);
+  assert.deepEqual(OPS, ['add', 'sub', 'mul', 'div']);
 });
