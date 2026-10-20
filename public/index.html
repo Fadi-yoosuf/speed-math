@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <title>Speed Math</title>
+  <meta name="description" content="A car-race game for kids: solve sums fast, your car moves faster.">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏎️</text></svg>">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">🏎️ Speed Math</a>
+    <div class="topbar-right">
+      <span id="conn-dot" class="conn-dot" title="Connecting…"></span>
+      <button id="mute-btn" class="icon-btn" type="button" aria-label="Toggle sound">🔊</button>
+    </div>
+  </header>
+
+  <main id="app">
+
+    <!-- HOME -------------------------------------------------------------- -->
+    <section id="screen-home" class="screen">
+      <div class="card">
+        <h1 class="title">Ready to race?</h1>
+        <p class="subtitle">Solve sums fast. Your car moves faster.</p>
+
+        <label class="field">
+          <span>Your nickname</span>
+          <input id="name-input" type="text" maxlength="12" autocomplete="off" autocapitalize="words" placeholder="e.g. Ava" required>
+        </label>
+
+        <div class="field">
+          <span>Your car</span>
+          <div id="car-picker" class="car-picker"></div>
+          <div id="colour-picker" class="colour-picker"></div>
+        </div>
+
+        <div class="field">
+          <span>Your level</span>
+          <div id="level-picker" class="level-picker"></div>
+        </div>
+
+        <div class="home-actions">
+          <button id="new-race-btn" class="btn btn-primary btn-big" type="button">🏁 New race</button>
+          <div class="join-row">
+            <input id="code-input" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CODE" aria-label="Room code">
+            <button id="join-btn" class="btn btn-secondary" type="button">Join</button>
+          </div>
+        </div>
+        <p class="hint">Got a TV or projector? Open <a href="/tv" id="tv-link">/tv</a> on it for the big-screen view.</p>
+      </div>
+    </section>
+
+    <!-- LOBBY ------------------------------------------------------------- -->
+    <section id="screen-lobby" class="screen hidden">
+      <div class="lobby-grid">
+        <div class="card code-card">
+          <div class="code-label">Room code</div>
+          <div id="room-code" class="room-code">----</div>
+          <div class="share-row">
+            <img id="qr-img" class="qr" alt="QR code to join" hidden>
+            <div class="share-text">
+              <div>Friends join at</div>
+              <a id="join-url" class="join-url" href="#" target="_blank" rel="noopener"></a>
+              <button id="copy-link-btn" class="btn btn-small" type="button">Copy link</button>
+              <a id="tv-url" class="btn btn-small btn-ghost" href="#" target="_blank" rel="noopener">📺 TV view</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Start grid <span id="player-count" class="muted"></span></h2>
+          <div id="lobby-track" class="track track-lobby"></div>
+          <div class="lobby-level">
+            <span>Your level:</span>
+            <div id="lobby-level-picker" class="level-picker level-picker-compact"></div>
+          </div>
+        </div>
+
+        <div class="card" id="settings-card">
+          <h2>Race settings <span id="settings-owner" class="muted"></span></h2>
+          <div class="settings">
+            <fieldset class="setting">
+              <legend>Sums</legend>
+              <label><input type="checkbox" name="op" value="add"> +</label>
+              <label><input type="checkbox" name="op" value="sub"> −</label>
+              <label><input type="checkbox" name="op" value="mul"> ×</label>
+            </fieldset>
+            <fieldset class="setting">
+              <legend>Race length</legend>
+              <label><input type="radio" name="length" value="10"> 10</label>
+              <label><input type="radio" name="length" value="20"> 20</label>
+              <label><input type="radio" name="length" value="30"> 30</label>
+            </fieldset>
+            <fieldset class="setting">
+              <legend>Levels</legend>
+              <select name="lockLevel">
+                <option value="">Everyone picks their own</option>
+                <option value="1">Lock: 🐣 Rookie</option>
+                <option value="2">Lock: 🚗 Driver</option>
+                <option value="3">Lock: 🏎️ Racer</option>
+                <option value="4">Lock: 🚀 Turbo</option>
+              </select>
+            </fieldset>
+            <fieldset class="setting">
+              <legend>Answer entry</legend>
+              <label><input type="radio" name="autoSubmit" value="1"> Auto (fast)</label>
+              <label><input type="radio" name="autoSubmit" value="0"> Press GO</label>
+            </fieldset>
+            <fieldset class="setting">
+              <legend>Flag timer</legend>
+              <label><input type="number" name="flagTimerSec" min="5" max="120" step="5"> seconds after the winner</label>
+            </fieldset>
+          </div>
+        </div>
+
+        <div class="lobby-actions">
+          <button id="start-btn" class="btn btn-primary btn-big" type="button">🚦 Start race</button>
+          <p id="waiting-host" class="muted hidden">Waiting for the host to start…</p>
+          <button id="leave-btn" class="btn btn-ghost" type="button">Leave</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- RACE -------------------------------------------------------------- -->
+    <section id="screen-race" class="screen hidden">
+      <div class="race-top">
+        <div id="race-track" class="track"></div>
+        <div id="flag-banner" class="flag-banner hidden"></div>
+      </div>
+
+      <div id="race-panel" class="race-panel">
+        <div class="race-status">
+          <span id="race-progress">0 / 20</span>
+          <span id="race-timer">0.0 s</span>
+          <span id="race-streak" class="streak"></span>
+        </div>
+        <div id="question-card" class="question-card">
+          <div id="question-text" class="question">…</div>
+          <div id="answer-slots" class="answer-slots"></div>
+        </div>
+        <div id="numpad" class="numpad">
+          <button type="button" data-key="1">1</button>
+          <button type="button" data-key="2">2</button>
+          <button type="button" data-key="3">3</button>
+          <button type="button" data-key="4">4</button>
+          <button type="button" data-key="5">5</button>
+          <button type="button" data-key="6">6</button>
+          <button type="button" data-key="7">7</button>
+          <button type="button" data-key="8">8</button>
+          <button type="button" data-key="9">9</button>
+          <button type="button" data-key="back" class="numpad-back" aria-label="Backspace">⌫</button>
+          <button type="button" data-key="0">0</button>
+          <button type="button" data-key="go" class="numpad-go">GO</button>
+        </div>
+        <div id="spectator-note" class="spectator-note hidden">👀 You joined mid-race. You're in the next one!</div>
+        <div id="finished-note" class="finished-note hidden"></div>
+        <button id="end-race-btn" class="btn btn-ghost btn-small hidden" type="button">End race for everyone</button>
+      </div>
+
+      <div id="countdown" class="countdown hidden"><span id="countdown-num">3</span></div>
+      <div id="skid-flash" class="skid-flash"></div>
+    </section>
+
+    <!-- PODIUM ------------------------------------------------------------ -->
+    <section id="screen-podium" class="screen hidden">
+      <canvas id="confetti" class="confetti"></canvas>
+      <div class="card podium-card">
+        <h1 class="title" id="podium-title">🏁 Race over!</h1>
+        <div id="podium" class="podium"></div>
+        <table class="results">
+          <thead><tr><th>#</th><th>Racer</th><th>Time</th><th>Accuracy</th><th>Streak</th></tr></thead>
+          <tbody id="results-body"></tbody>
+        </table>
+        <div class="podium-actions">
+          <button id="race-again-btn" class="btn btn-primary btn-big" type="button">🔁 Race again</button>
+          <button id="garage-btn" class="btn btn-secondary" type="button">🔧 Back to garage</button>
+          <p id="podium-waiting" class="muted hidden">Waiting for the host…</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/shared.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
