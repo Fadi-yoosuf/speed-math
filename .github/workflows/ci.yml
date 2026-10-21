@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t speed-math .
+      - name: Smoke test the image
+        run: |
+          docker run -d --rm --name sm -p 3000:3000 speed-math
+          for i in $(seq 1 10); do curl -fsS http://localhost:3000/healthz && break; sleep 1; done
+          curl -fsS http://localhost:3000/ | grep -q "Speed Math"
+          docker stop sm

@@ -334,6 +334,16 @@ link, and the same image runs on Render.
 Nitro streaks, sprint mode, division, themes, handicaps, per-race
 "fastest answer" stat, a solo practice mode with no room.
 
+### Milestone 5 — Season night (added once 0–4 had shipped)
+Season points across the races played in a room (3/2/1 for the top three,
+host can start a new season), host can remove a player, mystery-number
+sums (`7 + ? = 12`), a personal best for practice (kept on the device),
+an installable app (web manifest + service worker; practice works
+offline), graceful shutdown for hosted deploys, and a CI workflow.
+**Done when:** standings carry across three races and reset on demand,
+a removed player lands back on the home screen, the app installs to a
+phone home screen, and CI runs the tests and the Docker build.
+
 ---
 
 ## 7. Decisions to confirm (defaults in bold)

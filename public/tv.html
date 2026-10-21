@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Speed Math — TV</title>
+  <meta name="theme-color" content="#0f172a">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="tv">
+  <main id="tv-app">
+    <section id="tv-enter" class="screen">
+      <div class="card">
+        <h1 class="title">📺 TV view</h1>
+        <p class="subtitle">Type the room code the kids are racing in.</p>
+        <div class="join-row">
+          <input id="tv-code-input" type="text" maxlength="4" autocapitalize="characters" spellcheck="false" placeholder="CODE" aria-label="Room code">
+          <button id="tv-watch-btn" class="btn btn-primary" type="button">Watch</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tv-room" class="screen hidden">
+      <header class="tv-header">
+        <div class="tv-brand">🏎️ Speed Math</div>
+        <div class="tv-code-box">
+          <div class="code-label">Join with code</div>
+          <div id="tv-room-code" class="room-code">----</div>
+          <div id="tv-join-url" class="join-url"></div>
+        </div>
+        <img id="tv-qr" class="qr" alt="QR code to join" hidden>
+      </header>
+      <div id="tv-status" class="tv-status">Waiting for the host to start…</div>
+      <div id="tv-season" class="tv-season hidden"></div>
+      <div id="tv-track" class="track track-tv"></div>
+      <div id="tv-podium" class="podium hidden"></div>
+      <div id="tv-countdown" class="countdown hidden"><span id="tv-countdown-num">3</span></div>
+      <canvas id="tv-confetti" class="confetti"></canvas>
+    </section>
+  </main>
+  <div id="toast" class="toast hidden"></div>
+  <script src="/shared.js"></script>
+  <script src="/tv.js"></script>
+</body>
+</html>
